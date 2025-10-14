@@ -51,6 +51,7 @@ class LLVMPRAutomator:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.original_branch: str = ""
+        self.branch_base_name: str = ""
         self.created_branches: List[str] = []
         self.repo_slug: str = ""
 
@@ -129,14 +130,14 @@ class LLVMPRAutomator:
         return result.stdout.strip()
 
     def _create_and_push_branch_for_commit(
-        self, commit_hash: str, base_ref: str
+        self,
+        commit_hash: str,
+        base_ref: str,
+        index: int,
     ) -> Optional[str]:
         """Creates a temporary branch for a commit and pushes it."""
         title = self._get_commit_title(commit_hash)
-
-        sanitized_title = re.sub(r"[^\w\s-]", "", title).strip().lower()
-        sanitized_title = re.sub(r"[-\s]+", "-", sanitized_title)
-        branch_name = f"{self.args.prefix}{sanitized_title}-{commit_hash[:7]}"
+        branch_name = f"{self.args.prefix}{self.branch_base_name}-{index + 1}"
 
         print(f"\nProcessing commit {commit_hash[:7]}: {title}")
         print(f"Creating temporary branch '{branch_name}' from '{base_ref}'")
@@ -217,13 +218,19 @@ class LLVMPRAutomator:
 
             print(f"Found {len(commits)} commit(s) to process.")
 
+            self.branch_base_name = self.original_branch
+            if self.original_branch in ["main", "master"]:
+                first_commit_title = self._get_commit_title(commits[0])
+                sanitized_title = re.sub(r"[^\w\s-]", "", first_commit_title).strip().lower()
+                self.branch_base_name = re.sub(r"[-\s]+", "-", sanitized_title)
+
             base_for_next_branch = f"{self.args.upstream_remote}/{self.args.base}"
             base_for_next_pr = self.args.base
             last_pr_url = None
 
-            for commit in commits:
+            for i, commit in enumerate(commits):
                 temp_branch = self._create_and_push_branch_for_commit(
-                    commit, base_for_next_branch
+                    commit, base_for_next_branch, i
                 )
 
                 if temp_branch:
@@ -336,6 +343,9 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.prefix and not args.prefix.endswith("/"):
+        args.prefix += "/"
 
     if args.auto_merge and args.merge:
         print("Error: --auto-merge and --merge are mutually exclusive.", file=sys.stderr)
