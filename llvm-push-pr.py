@@ -16,12 +16,16 @@ def run_command(
     check: bool = True,
     capture_output: bool = False,
     text: bool = False,
+    input: Optional[str] = None,
 ) -> subprocess.CompletedProcess:
     """Runs a command and returns the result."""
-    print(f"Running: {' '.join(command)}")
     try:
         result = subprocess.run(
-            command, check=check, capture_output=capture_output, text=text
+            command,
+            check=check,
+            capture_output=capture_output,
+            text=text,
+            input=input,
         )
         return result
     except subprocess.CalledProcessError as e:
@@ -45,12 +49,14 @@ def get_current_branch() -> str:
     return result.stdout.strip()
 
 
-def get_commit_stack(base_branch: str) -> List[str]:
+def get_commit_stack(base_branch: str, upstream_remote: str) -> List[str]:
     """Gets the stack of commits from HEAD to the base branch."""
-    target = f"{GITHUB_REMOTE_NAME}/{base_branch}"
-    run_command(["git", "fetch", GITHUB_REMOTE_NAME, base_branch])
+    target = f"{upstream_remote}/{base_branch}"
+    print(f"Fetching from upstream remote '{upstream_remote}'...")
+    run_command(["git", "fetch", upstream_remote, base_branch])
 
     # Find the merge base
+    print(f"Finding merge base between HEAD and {target}...")
     merge_base_result = run_command(
         ["git", "merge-base", "HEAD", target], capture_output=True, text=True
     )
@@ -90,7 +96,12 @@ def get_commit_details(commit_hash: str) -> (str, str):
 
 
 def create_and_push_branch_for_commit(
-    commit_hash: str, base_branch: str, remote_name: str, force: bool
+    commit_hash: str,
+    base_branch: str,
+    remote_name: str,
+    upstream_remote: str,
+    branch_prefix: str,
+    force: bool,
 ):
     """Creates a temporary branch for a commit and pushes it."""
     title, _ = get_commit_details(commit_hash)
@@ -100,13 +111,13 @@ def create_and_push_branch_for_commit(
     sanitized_title = re.sub(r"[-\s]+", "-", sanitized_title)
 
     # Truncate to a reasonable length
-    branch_name = f"{BRANCH_PREFIX}{sanitized_title}-{commit_hash[:7]}"
+    branch_name = f"{branch_prefix}{sanitized_title}-{commit_hash[:7]}"
 
     print(f"\nProcessing commit {commit_hash[:7]}: {title}")
     print(f"Creating temporary branch: {branch_name}")
 
     # Create the branch from the base branch ref
-    base_ref = f"{remote_name}/{base_branch}"
+    base_ref = f"{upstream_remote}/{base_branch}"
     run_command(["git", "branch", "-f", branch_name, base_ref])
 
     # Cherry-pick the commit
@@ -135,7 +146,15 @@ def create_and_push_branch_for_commit(
     return branch_name, True
 
 
-def create_pr(branch_name: str, title: str, body: str, base_branch: str, draft: bool):
+def create_pr(
+    branch_name: str,
+    title: str,
+    body: str,
+    base_branch: str,
+    draft: bool,
+    auto_merge: bool,
+    merge: bool,
+):
     """Creates a GitHub Pull Request using the gh CLI."""
     if not is_gh_installed():
         print(
@@ -156,13 +175,22 @@ def create_pr(branch_name: str, title: str, body: str, base_branch: str, draft: 
         branch_name,
         "--title",
         title,
-        "--body",
-        body,
     ]
     if draft:
         pr_command.append("--draft")
 
-    run_command(pr_command)
+    # Pass the body via stdin to preserve formatting
+    print("Passing PR body via stdin to preserve formatting.")
+    result = run_command(pr_command, input=body, text=True, capture_output=True)
+    pr_url = result.stdout.strip()
+    print(f"Pull request created: {pr_url}")
+
+    if auto_merge:
+        print("Enabling auto-merge for the pull request.")
+        run_command(["gh", "pr", "merge", pr_url, "--auto", "--squash"])
+    elif merge:
+        print("Attempting to merge the pull request immediately.")
+        run_command(["gh", "pr", "merge", pr_url, "--squash"])
 
 
 def is_gh_installed() -> bool:
@@ -174,7 +202,21 @@ def is_gh_installed() -> bool:
         return False
 
 
+def check_git_repository():
+    """Checks if the current directory is a git repository."""
+    result = run_command(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or result.stdout.strip() != "true":
+        print("Error: This script must be run inside a git repository.", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
+    check_git_repository()
     parser = argparse.ArgumentParser(
         description="Create LLVM Pull Requests from a stack of commits."
     )
@@ -182,6 +224,21 @@ def main():
         "--base",
         default=BASE_BRANCH,
         help=f"The base branch to measure commits against (default: {BASE_BRANCH})",
+    )
+    parser.add_argument(
+        "--remote",
+        default=GITHUB_REMOTE_NAME,
+        help=f"The remote for your fork to push to (default: {GITHUB_REMOTE_NAME})",
+    )
+    parser.add_argument(
+        "--upstream-remote",
+        default="upstream",
+        help="The remote that points to the upstream repository (e.g., 'llvm/llvm-project').",
+    )
+    parser.add_argument(
+        "--prefix",
+        default=BRANCH_PREFIX,
+        help=f"The prefix for temporary branches (default: {BRANCH_PREFIX})",
     )
     parser.add_argument(
         "-f",
@@ -198,6 +255,16 @@ def main():
         help="Push branches but do not create pull requests.",
     )
     parser.add_argument(
+        "--auto-merge",
+        action="store_true",
+        help="Enable auto-merge for the pull requests.",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge the pull requests immediately after creation.",
+    )
+    parser.add_argument(
         "commits",
         nargs="*",
         help="Specific commit hashes to push. If empty, all commits since base branch are used.",
@@ -205,13 +272,17 @@ def main():
 
     args = parser.parse_args()
 
+    if args.auto_merge and args.merge:
+        print("Error: --auto-merge and --merge are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
     original_branch = get_current_branch()
     print(f"On branch: {original_branch}")
 
     if args.commits:
         commits = args.commits
     else:
-        commits = get_commit_stack(args.base)
+        commits = get_commit_stack(args.base, args.upstream_remote)
 
     print(f"Found {len(commits)} commit(s) to process.")
 
@@ -222,11 +293,24 @@ def main():
             title, body = get_commit_details(commit)
 
             temp_branch, success = create_and_push_branch_for_commit(
-                commit, args.base, GITHUB_REMOTE_NAME, args.force
+                commit,
+                args.base,
+                args.remote,
+                args.upstream_remote,
+                args.prefix,
+                args.force,
             )
 
             if success and not args.no_pr:
-                create_pr(temp_branch, title, body, args.base, args.draft)
+                create_pr(
+                    temp_branch,
+                    title,
+                    body,
+                    args.base,
+                    args.draft,
+                    args.auto_merge,
+                    args.merge,
+                )
                 created_branches.append(temp_branch)
             elif not success:
                 print(

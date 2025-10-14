@@ -15,7 +15,11 @@ A Python script to simplify the process of creating pull requests for LLVM, espe
 2.  **Git**: Git must be installed and available in your system's PATH.
 3.  **GitHub CLI (`gh`)**: This tool is required for creating pull requests. You can find installation instructions at [cli.github.com](https://cli.github.com/).
     * After installing, make sure to authenticate with `gh auth login`.
-4.  **Configured Git Remotes**: You should have a remote (by default, named `origin`) that points to your fork of the `llvm-project` repository.
+4.  **Configured Git Remotes**: For the best experience, especially when contributing to LLVM, it's recommended to have two remotes configured:
+    * `origin`: Your fork of the `llvm-project` repository (e.g., `git@github.com:<your-username>/llvm-project.git`).
+    * `upstream`: The main LLVM repository (e.g., `https://github.com/llvm/llvm-project.git`).
+
+    This setup allows the script to create branches based on the official `upstream` repository while pushing them to your `origin` fork, which is the standard workflow for creating pull requests.
 
 ## Setup
 
@@ -70,8 +74,13 @@ If you have multiple commits stacked on top of the base branch (`main` by defaul
     ```bash
     python llvm_pr.py --base release/15.x
     ```
+* `--remote <name>`: Specify the remote for your fork to push to. Default is `origin`.
+* `--upstream-remote <name>`: Specify the remote that points to the upstream repository. Default is `upstream`.
+* `--prefix <prefix>`: Specify a different prefix for temporary branches. Default is `dev/`.
 * `-f` or `--force`: Force push the generated branches. Useful if you've updated a commit and need to update the corresponding branch. **Use with caution.**
 * `--draft`: Create all pull requests as drafts.
+* `--auto-merge`: Enable auto-merge for the pull requests.
+* `--merge`: Merge the pull requests immediately after creation.
 * `--no-pr`: Pushes the branches to your remote but stops before creating pull requests. This is useful if you want to inspect the branches on GitHub first.
 * `[commits...]`: You can provide one or more specific commit hashes to process, instead of all commits on the current branch.
     ```bash
@@ -110,6 +119,6 @@ For each commit in the stack, the script performs these steps:
 2.  Generates a unique, descriptive branch name based on the commit message.
 3.  Creates this new branch from the specified `--base` branch.
 4.  Cherry-picks the commit onto the new branch.
-5.  Pushes the new branch to your remote repository (`origin`).
-6.  Uses the `gh` CLI to open a pull request with the commit's title and body.
+5.  Pushes the new branch to your remote repository.
+6.  Uses the `gh` CLI to open a pull request with the commit's title and body. The script passes the commit body to `gh` via standard input to ensure that formatting (including line breaks) is preserved.
 7.  After processing all commits, it cleans up all temporary local branches.
