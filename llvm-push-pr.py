@@ -13,8 +13,17 @@ def run_command(
     capture_output: bool = False,
     text: bool = False,
     input: Optional[str] = None,
+    dry_run: bool = False,
+    read_only: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Runs a command and returns the result, exiting on failure."""
+    """
+    Runs a command. In dry_run mode, it prints the command instead of running it,
+    unless read_only is True.
+    """
+    if dry_run and not read_only:
+        print(f"[Dry Run] Would run: {' '.join(command)}")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
     try:
         return subprocess.run(
             command,
@@ -32,9 +41,9 @@ def run_command(
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {' '.join(command)}", file=sys.stderr)
         if e.stdout:
-            print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
+            print(f"---\n--- stdout ---\n{e.stdout}", file=sys.stderr)
         if e.stderr:
-            print(f"--- stderr ---\n{e.stderr}", file=sys.stderr)
+            print(f"---\n--- stderr ---\n{e.stderr}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -44,12 +53,19 @@ class LLVMPRAutomator:
         self.original_branch: str = ""
         self.created_branches: List[str] = []
 
+    def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs):
+        """Wrapper for run_command that passes the dry_run flag."""
+        return run_command(
+            command, dry_run=self.args.dry_run, read_only=read_only, **kwargs
+        )
+
     def _get_current_branch(self) -> str:
         """Gets the current git branch."""
-        result = run_command(
+        result = self._run_cmd(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            read_only=True,
         )
         return result.stdout.strip()
 
@@ -57,11 +73,14 @@ class LLVMPRAutomator:
         """Gets the stack of commits from HEAD to the base branch."""
         target = f"{self.args.upstream_remote}/{self.args.base}"
         print(f"Fetching from upstream remote '{self.args.upstream_remote}'...")
-        run_command(["git", "fetch", self.args.upstream_remote, self.args.base])
+        self._run_cmd(["git", "fetch", self.args.upstream_remote, self.args.base])
 
         print(f"Finding merge base between HEAD and {target}...")
-        merge_base_result = run_command(
-            ["git", "merge-base", "HEAD", target], capture_output=True, text=True
+        merge_base_result = self._run_cmd(
+            ["git", "merge-base", "HEAD", target],
+            capture_output=True,
+            text=True,
+            read_only=True,
         )
         merge_base = merge_base_result.stdout.strip()
 
@@ -72,10 +91,11 @@ class LLVMPRAutomator:
             )
             sys.exit(1)
 
-        result = run_command(
+        result = self._run_cmd(
             ["git", "rev-list", "--reverse", f"{merge_base}..HEAD"],
             capture_output=True,
             text=True,
+            read_only=True,
         )
         commits = result.stdout.strip().split("\n")
         if not commits or commits == [""]:
@@ -84,10 +104,11 @@ class LLVMPRAutomator:
 
     def _get_commit_details(self, commit_hash: str) -> Tuple[str, str]:
         """Gets the title and body of a commit."""
-        result = run_command(
+        result = self._run_cmd(
             ["git", "show", "-s", f"--format=%s%n%n%b", commit_hash],
             capture_output=True,
             text=True,
+            read_only=True,
         )
         parts = result.stdout.strip().split("\n\n", 1)
         title = parts[0]
@@ -98,19 +119,19 @@ class LLVMPRAutomator:
         """Creates a temporary branch for a commit and pushes it."""
         title, _ = self._get_commit_details(commit_hash)
 
-        sanitized_title = re.sub(r"[^\w\s-]", "", title).strip().lower()
-        sanitized_title = re.sub(r"[-\s]+", "-", sanitized_title)
+        sanitized_title = re.sub(r"[^\\w\\s-]", "", title).strip().lower()
+        sanitized_title = re.sub(r"[-\\s]+", "-", sanitized_title)
         branch_name = f"{self.args.prefix}{sanitized_title}-{commit_hash[:7]}"
 
         print(f"\nProcessing commit {commit_hash[:7]}: {title}")
         print(f"Creating temporary branch: {branch_name}")
 
         base_ref = f"{self.args.upstream_remote}/{self.args.base}"
-        run_command(["git", "branch", "-f", branch_name, base_ref])
+        self._run_cmd(["git", "branch", "-f", branch_name, base_ref])
 
         print(f"Cherry-picking {commit_hash} onto {branch_name}")
-        run_command(["git", "checkout", branch_name], capture_output=True)
-        cherry_pick_result = run_command(
+        self._run_cmd(["git", "checkout", branch_name], capture_output=True)
+        cherry_pick_result = self._run_cmd(
             ["git", "cherry-pick", commit_hash], check=False
         )
 
@@ -120,13 +141,13 @@ class LLVMPRAutomator:
                 file=sys.stderr,
             )
             print("Aborting cherry-pick...", file=sys.stderr)
-            run_command(["git", "cherry-pick", "--abort"], check=False)
+            self._run_cmd(["git", "cherry-pick", "--abort"], check=False)
             return None
 
         push_command = ["git", "push", self.args.remote, branch_name]
         if self.args.force:
             push_command.append("--force")
-        run_command(push_command)
+        self._run_cmd(push_command)
         return branch_name
 
     def _create_pr(self, branch_name: str, title: str, body: str):
@@ -142,26 +163,29 @@ class LLVMPRAutomator:
             pr_command.append("--draft")
 
         print("Passing PR body via stdin to preserve formatting.")
-        result = run_command(pr_command, input=body, text=True, capture_output=True)
+        result = self._run_cmd(pr_command, input=body, text=True, capture_output=True)
         pr_url = result.stdout.strip()
-        print(f"Pull request created: {pr_url}")
+        if not self.args.dry_run:
+            print(f"Pull request created: {pr_url}")
 
         if self.args.auto_merge:
             print("Enabling auto-merge for the pull request.")
-            run_command(["gh", "pr", "merge", pr_url, "--auto", "--squash"])
+            self._run_cmd(["gh", "pr", "merge", pr_url, "--auto", "--squash"])
         elif self.args.merge:
             print("Attempting to merge the pull request immediately.")
-            run_command(["gh", "pr", "merge", pr_url, "--squash"])
+            self._run_cmd(["gh", "pr", "merge", pr_url, "--squash"])
 
     def _cleanup(self):
         """Cleans up by returning to the original branch and deleting temp branches."""
+        if not self.original_branch:
+            return
         print(f"\nSwitching back to original branch: {self.original_branch}")
-        run_command(["git", "checkout", self.original_branch], capture_output=True)
+        self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
 
         if self.created_branches:
             print("\nCleaning up temporary local branches:")
             for branch in self.created_branches:
-                run_command(["git", "branch", "-D", branch])
+                self._run_cmd(["git", "branch", "-D", branch])
 
     def run(self):
         self.original_branch = self._get_current_branch()
@@ -188,7 +212,6 @@ class LLVMPRAutomator:
                         f"Skipping PR creation for failed commit {commit[:7]}",
                         file=sys.stderr,
                     )
-                    # On failure, it is better to stop to let the user fix the issue.
                     sys.exit(1)
         finally:
             self._cleanup()
@@ -196,16 +219,17 @@ class LLVMPRAutomator:
         print("\nDone.")
 
 
-def check_prerequisites():
+def check_prerequisites(dry_run: bool = False):
     """Checks if git and gh are installed and if inside a git repository."""
     print("Checking prerequisites...")
-    run_command(["git", "--version"], capture_output=True)
-    run_command(["gh", "--version"], capture_output=True)
+    run_command(["git", "--version"], capture_output=True, read_only=True)
+    run_command(["gh", "--version"], capture_output=True, read_only=True)
     result = run_command(
         ["git", "rev-parse", "--is-inside-work-tree"],
         check=False,
         capture_output=True,
         text=True,
+        read_only=True,
     )
     if result.returncode != 0 or result.stdout.strip() != "true":
         print("Error: This script must be run inside a git repository.", file=sys.stderr)
@@ -268,6 +292,11 @@ def main():
         help="Merge the pull requests immediately after creation.",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the commands that would be executed without running them.",
+    )
+    parser.add_argument(
         "commits",
         nargs="*",
         help="Specific commit hashes to push. If empty, all commits since base branch are used.",
@@ -279,7 +308,7 @@ def main():
         print("Error: --auto-merge and --merge are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
 
-    check_prerequisites()
+    check_prerequisites(args.dry_run)
     automator = LLVMPRAutomator(args)
     automator.run()
 
