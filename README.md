@@ -6,7 +6,9 @@ A Python script to simplify the process of creating pull requests for LLVM, espe
 
 *   **Portability**: Written in Python, it works on macOS, Linux, and Windows.
 *   **Stacked Commits**: Correctly handles a series of dependent commits, creating a chain of pull requests.
-*   **Automatic Branching**: Generates temporary, descriptive branch names.
+*   **Automatic Branching**: Generates predictable, counter-based temporary branch names.
+    *   If on a feature branch (e.g., `my-feature`), names are `dev/my-feature-1`, `dev/my-feature-2`.
+    *   If on `main` or `master`, names are based on the first commit title (e.g., `dev/feat-add-new-thing-1`).
 *   **GitHub CLI Integration**: Uses the `gh` command-line tool to create pull requests, using the idiomatic `--fill` flag.
 *   **Atomic Merging**: When used with `--merge` or `--auto-merge`, it merges the entire stack of PRs in a single operation.
 
@@ -65,10 +67,10 @@ A Python script to simplify the process of creating pull requests for LLVM, espe
     llvm-push-pr.py
     ```
 4.  The script will:
-    *   Create a branch like `dev/feat-add-helper-function-abcdef1` from `upstream/main`.
+    *   Create a branch `dev/my-awesome-feature-1` from `upstream/main`.
     *   Open **PR #1** for this branch, targeting `main`.
-    *   Create a second branch `dev/feat-use-helper-function-1234567` from the first branch.
-    *   Open **PR #2** for this second branch, targeting `dev/feat-add-helper-function-abcdef1`.
+    *   Create a second branch `dev/my-awesome-feature-2` from the first branch.
+    *   Open **PR #2** for this second branch, targeting `dev/my-awesome-feature-1`.
     *   Clean up the temporary local branches and return you to `my-awesome-feature`.
 
 ### Command-line Options
@@ -87,24 +89,24 @@ A Python script to simplify the process of creating pull requests for LLVM, espe
 
 ## How It Works
 
-The script is designed to correctly handle stacks of dependent commits by creating a chain of pull requests. For a stack of commits A, B, and C, it performs these steps:
+The script creates a chain of pull requests based on your current branch. If you are on a branch named `my-feature` with commits A, B, and C, it performs these steps:
 
 1.  **For the first commit (A):**
-    *   Creates a branch `branch-A` from `upstream/main`.
-    *   Cherry-picks commit A onto `branch-A`.
-    *   Pushes `branch-A` to your `origin` remote.
-    *   Creates **PR #1** targeting `main` (`branch-A` -> `main`).
+    *   Creates a branch `dev/my-feature-1` from `upstream/main`.
+    *   Cherry-picks commit A onto this new branch.
+    *   Pushes the branch to your `origin` remote.
+    *   Creates **PR #1** targeting `main`.
 
 2.  **For the second commit (B):**
-    *   Creates a branch `branch-B` from `branch-A`.
-    *   Cherry-picks commit B onto `branch-B`.
-    *   Pushes `branch-B` to `origin`.
-    *   Creates **PR #2** targeting `branch-A` (`branch-B` -> `branch-A`).
+    *   Creates a branch `dev/my-feature-2` from `dev/my-feature-1`.
+    *   Cherry-picks commit B.
+    *   Pushes the branch to `origin`.
+    *   Creates **PR #2** targeting `dev/my-feature-1`.
 
 3.  **For the third commit (C):**
-    *   Creates a branch `branch-C` from `branch-B`.
-    *   Cherry-picks commit C onto `branch-C`.
-    *   Pushes `branch-C` to `origin`.
-    *   Creates **PR #3** targeting `branch-B` (`branch-C` -> `branch-B`).
+    *   Creates a branch `dev/my-feature-3` from `dev/my-feature-2`.
+    *   Cherry-picks commit C.
+    *   Pushes the branch to `origin`.
+    *   Creates **PR #3** targeting `dev/my-feature-2`.
 
 When the final PR (#3) is merged (either manually or with `--merge`), GitHub automatically merges the entire chain (PRs #2 and #1) into `main`, ensuring the whole stack lands together correctly.
