@@ -23,7 +23,7 @@ def run_command(
     """
     if dry_run and not read_only:
         print(f"[Dry Run] Would run: {' '.join(command)}")
-        return subprocess.CompletedProcess(command, 0, '{"mergeable":"MERGEABLE"}', "")
+        return subprocess.CompletedProcess(command, 0, "", "")
 
     try:
         return subprocess.run(
@@ -138,6 +138,11 @@ class LLVMPRAutomator:
         body = parts[1] if len(parts) > 1 else ""
         return title, body
 
+    def _sanitize_for_branch_name(self, text: str) -> str:
+        """Sanitizes a string to be used as a git branch name."""
+        sanitized = re.sub(r"[^\w\s-]", "", text).strip().lower()
+        return re.sub(r"[-\s]+", "-", sanitized)
+
     def _create_and_push_branch_for_commit(
         self, commit_hash: str, base_branch_name: str, index: int
     ) -> str:
@@ -149,8 +154,6 @@ class LLVMPRAutomator:
 
         self._run_cmd(["git", "branch", "-f", branch_name, commit_hash])
         push_command = ["git", "push", self.args.remote, branch_name]
-        if self.args.force:
-            push_command.append("--force")
         self._run_cmd(push_command)
         return branch_name
 
@@ -177,80 +180,42 @@ class LLVMPRAutomator:
             print(f"Pull request created: {pr_url}")
         return pr_url
 
-    def _wait_and_merge_pr(self, pr_url: str, commit_hash: str, head_branch: str):
-        """Waits for a PR to be mergeable by polling, then merges it with the correct commit message."""
+    def _merge_pr(self, pr_url: str):
+        """Merges a PR, retrying if it's not yet mergeable."""
         if not pr_url:
             return
 
-        pr_number = pr_url.split("/")[-1]
-
         if self.args.dry_run:
-            print(f"[Dry Run] Would wait for PR #{pr_number} to be mergeable.")
-            title, _ = self._get_commit_details(commit_hash)
-            print(f"[Dry Run] Would merge PR #{pr_number} with title: '{title}'")
+            print(f"[Dry Run] Would merge {pr_url}")
             return
 
-        max_retries = 30
-        retry_delay = 30
+        max_retries = 10
+        retry_delay = 5  # seconds
         for i in range(max_retries):
-            print(
-                f"Checking mergeability of PR #{pr_number} (attempt {i+1}/{max_retries})..."
-            )
+            print(f"Attempting to merge {pr_url} (attempt {i+1}/{max_retries})...")
+            merge_cmd = ["gh", "pr", "merge", pr_url, "--squash", "--delete-branch"]
+            if self.args.auto_merge:
+                merge_cmd.insert(3, "--auto")
+
             result = self._run_cmd(
-                ["gh", "pr", "view", pr_url, "--json", "mergeable"],
-                capture_output=True,
-                text=True,
-                read_only=True,
+                merge_cmd, check=False, capture_output=True, text=True
             )
-            state_match = re.search(r'"mergeable":\s*"(\w+)"', result.stdout)
-            if not state_match:
-                print(
-                    f"Could not determine mergeable state. Retrying in {retry_delay} seconds..."
-                )
-                time.sleep(retry_delay)
-                continue
 
-            state = state_match.group(1)
-
-            if state == "MERGEABLE":
-                print("PR is mergeable. Merging now...")
-                title, body = self._get_commit_details(commit_hash)
-                merge_endpoint = f"/repos/{self.repo_slug}/pulls/{pr_number}/merge"
-
-                self._run_cmd(
-                    [
-                        "gh",
-                        "api",
-                        "--method",
-                        "PUT",
-                        merge_endpoint,
-                        "-f",
-                        f"commit_title={title}",
-                        "-f",
-                        f"commit_message={body}",
-                        "-f",
-                        "merge_method=squash",
-                    ]
-                )
-
+            if result.returncode == 0:
                 print("Successfully merged.")
-                time.sleep(5)
-                self._run_cmd(
-                    ["git", "push", self.args.remote, "--delete", head_branch],
-                    check=False,
-                )
+                time.sleep(2)  # Give GitHub a moment to reflect the merge
                 return
-            elif state == "CONFLICTING":
-                print(
-                    f"Error: PR #{pr_number} has merge conflicts and cannot be merged.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+
+            stderr = result.stderr.lower()
+            if "pull request is not mergeable" in stderr:
+                print(f"PR not mergeable yet. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
             else:
                 print(
-                    f"PR is not mergeable yet (state: {state}). Retrying in {retry_delay} seconds..."
+                    f"Error: Failed to merge PR for a critical reason.", file=sys.stderr
                 )
-                time.sleep(retry_delay)
+                print(f"--- stderr ---\n{result.stderr}", file=sys.stderr)
+                sys.exit(1)
 
         print(
             f"Error: PR was not mergeable after {max_retries} attempts.",
@@ -270,6 +235,21 @@ class LLVMPRAutomator:
             if not initial_commits:
                 print("No new commits to process.")
                 return
+
+            if self.args.auto_merge and len(initial_commits) > 1:
+                print(
+                    "Error: --auto-merge is only supported for a single commit.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            if self.args.no_merge and len(initial_commits) > 1:
+                print(
+                    "Error: --no-merge is only supported for a single commit. "
+                    "For stacks, the script must merge sequentially.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
             print(f"\nFound {len(initial_commits)} commit(s) to process.")
             branch_base_name = self.original_branch
@@ -291,10 +271,10 @@ class LLVMPRAutomator:
                 temp_branch = self._create_and_push_branch_for_commit(
                     commit_to_process, branch_base_name, i
                 )
+                pr_url = self._create_pr(temp_branch)
 
                 if not self.args.no_merge:
-                    pr_url = self._create_pr(temp_branch)
-                    self._wait_and_merge_pr(pr_url, commit_to_process, temp_branch)
+                    self._merge_pr(pr_url)
 
         finally:
             print(f"\nReturning to original branch: {self.original_branch}")
@@ -302,11 +282,6 @@ class LLVMPRAutomator:
                 ["git", "checkout", self.original_branch], capture_output=True
             )
             print("\nDone.")
-
-    def _sanitize_for_branch_name(self, text: str) -> str:
-        """Sanitizes a string to be used as a git branch name."""
-        sanitized = re.sub(r"[^\\w\\s-]", "", text).strip().lower()
-        return re.sub(r"[-\\s]+", "-", sanitized)
 
 
 def check_prerequisites(dry_run: bool = False):
@@ -359,9 +334,6 @@ def main():
         help=f"Prefix for temporary branches (default: {BRANCH_PREFIX})",
     )
     parser.add_argument(
-        "-f", "--force", action="store_true", help="Force push temporary branches."
-    )
-    parser.add_argument(
         "--draft", action="store_true", help="Create pull requests as drafts."
     )
     parser.add_argument(
@@ -370,7 +342,7 @@ def main():
     parser.add_argument(
         "--auto-merge",
         action="store_true",
-        help="Enable auto-merge for each PR instead of waiting to merge.",
+        help="Enable auto-merge for each PR instead of attempting to merge immediately.",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Print commands without executing them."
