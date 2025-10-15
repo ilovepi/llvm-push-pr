@@ -41,9 +41,9 @@ def run_command(
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {' '.join(command)}", file=sys.stderr)
         if e.stdout:
-            print(f"---\n--- stdout ---\n{e.stdout}", file=sys.stderr)
+            print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
         if e.stderr:
-            print(f"---\n--- stderr ---\n{e.stderr}", file=sys.stderr)
+            print(f"--- stderr ---\n{e.stderr}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -52,12 +52,28 @@ class LLVMPRAutomator:
         self.args = args
         self.original_branch: str = ""
         self.created_branches: List[str] = []
+        self.repo_slug: str = ""
 
     def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs):
         """Wrapper for run_command that passes the dry_run flag."""
         return run_command(
             command, dry_run=self.args.dry_run, read_only=read_only, **kwargs
         )
+
+    def _get_repo_slug(self) -> str:
+        """Gets the GitHub repository slug (e.g., 'owner/repo') from the remote URL."""
+        result = self._run_cmd(
+            ["git", "remote", "get-url", self.args.remote],
+            capture_output=True,
+            text=True,
+            read_only=True,
+        )
+        url = result.stdout.strip()
+        match = re.search(r"github\.com[/:]([\w-]+/[\w-]+)", url)
+        if not match:
+            print(f"Error: Could not parse repository slug from remote URL: {url}", file=sys.stderr)
+            sys.exit(1)
+        return match.group(1).replace(".git", "")
 
     def _get_current_branch(self) -> str:
         """Gets the current git branch."""
@@ -102,31 +118,29 @@ class LLVMPRAutomator:
             return []
         return commits
 
-    def _get_commit_details(self, commit_hash: str) -> Tuple[str, str]:
-        """Gets the title and body of a commit."""
+    def _get_commit_title(self, commit_hash: str) -> str:
+        """Gets the title of a commit."""
         result = self._run_cmd(
-            ["git", "show", "-s", f"--format=%s%n%n%b", commit_hash],
+            ["git", "show", "-s", "--format=%s", commit_hash],
             capture_output=True,
             text=True,
             read_only=True,
         )
-        parts = result.stdout.strip().split("\n\n", 1)
-        title = parts[0]
-        body = parts[1] if len(parts) > 1 else ""
-        return title, body
+        return result.stdout.strip()
 
-    def _create_and_push_branch_for_commit(self, commit_hash: str) -> Optional[str]:
+    def _create_and_push_branch_for_commit(
+        self, commit_hash: str, base_ref: str
+    ) -> Optional[str]:
         """Creates a temporary branch for a commit and pushes it."""
-        title, _ = self._get_commit_details(commit_hash)
+        title = self._get_commit_title(commit_hash)
 
-        sanitized_title = re.sub(r"[^\\w\\s-]", "", title).strip().lower()
-        sanitized_title = re.sub(r"[-\\s]+", "-", sanitized_title)
+        sanitized_title = re.sub(r"[^\w\s-]", "", title).strip().lower()
+        sanitized_title = re.sub(r"[-\s]+", "-", sanitized_title)
         branch_name = f"{self.args.prefix}{sanitized_title}-{commit_hash[:7]}"
 
         print(f"\nProcessing commit {commit_hash[:7]}: {title}")
-        print(f"Creating temporary branch: {branch_name}")
+        print(f"Creating temporary branch '{branch_name}' from '{base_ref}'")
 
-        base_ref = f"{self.args.upstream_remote}/{self.args.base}"
         self._run_cmd(["git", "branch", "-f", branch_name, base_ref])
 
         print(f"Cherry-picking {commit_hash} onto {branch_name}")
@@ -150,29 +164,32 @@ class LLVMPRAutomator:
         self._run_cmd(push_command)
         return branch_name
 
-    def _create_pr(self, branch_name: str, title: str, body: str):
+    def _create_pr(self, head_branch: str, base_branch: str) -> Optional[str]:
         """Creates a GitHub Pull Request using the gh CLI."""
-        print(f"Creating pull request for {branch_name}")
+        print(f"Creating pull request for '{head_branch}' targeting '{base_branch}'")
         pr_command = [
             "gh", "pr", "create",
-            "--base", self.args.base,
-            "--head", branch_name,
-            "--title", title,
+            "--repo", self.repo_slug,
+            "--base", base_branch,
+            "--head", head_branch,
+            "--fill",
         ]
         if self.args.draft:
             pr_command.append("--draft")
 
-        print("Passing PR body via stdin to preserve formatting.")
-        result = self._run_cmd(pr_command, input=body, text=True, capture_output=True)
+        result = self._run_cmd(pr_command, text=True, capture_output=True)
         pr_url = result.stdout.strip()
         if not self.args.dry_run:
             print(f"Pull request created: {pr_url}")
+        return pr_url
 
+    def _merge_pr(self, pr_url: str):
+        """Merges or enables auto-merge for a pull request."""
         if self.args.auto_merge:
-            print("Enabling auto-merge for the pull request.")
+            print(f"Enabling auto-merge for {pr_url}")
             self._run_cmd(["gh", "pr", "merge", pr_url, "--auto", "--squash"])
         elif self.args.merge:
-            print("Attempting to merge the pull request immediately.")
+            print(f"Attempting to merge {pr_url} immediately.")
             self._run_cmd(["gh", "pr", "merge", pr_url, "--squash"])
 
     def _cleanup(self):
@@ -188,6 +205,7 @@ class LLVMPRAutomator:
                 self._run_cmd(["git", "branch", "-D", branch])
 
     def run(self):
+        self.repo_slug = self._get_repo_slug()
         self.original_branch = self._get_current_branch()
         print(f"On branch: {self.original_branch}")
 
@@ -199,20 +217,35 @@ class LLVMPRAutomator:
 
             print(f"Found {len(commits)} commit(s) to process.")
 
+            base_for_next_branch = f"{self.args.upstream_remote}/{self.args.base}"
+            base_for_next_pr = self.args.base
+            last_pr_url = None
+
             for commit in commits:
-                title, body = self._get_commit_details(commit)
-                temp_branch = self._create_and_push_branch_for_commit(commit)
+                temp_branch = self._create_and_push_branch_for_commit(
+                    commit, base_for_next_branch
+                )
 
                 if temp_branch:
                     self.created_branches.append(temp_branch)
                     if not self.args.no_pr:
-                        self._create_pr(temp_branch, title, body)
+                        pr_url = self._create_pr(temp_branch, base_for_next_pr)
+                        if pr_url:
+                            last_pr_url = pr_url
+                    
+                    # Prepare for the next iteration
+                    base_for_next_branch = temp_branch
+                    base_for_next_pr = temp_branch
                 else:
                     print(
-                        f"Skipping PR creation for failed commit {commit[:7]}",
+                        f"Stopping due to failed cherry-pick for commit {commit[:7]}",
                         file=sys.stderr,
                     )
                     sys.exit(1)
+            
+            if last_pr_url and (self.args.merge or self.args.auto_merge):
+                self._merge_pr(last_pr_url)
+
         finally:
             self._cleanup()
 
