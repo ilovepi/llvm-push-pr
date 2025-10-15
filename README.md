@@ -42,22 +42,21 @@ The script's default behavior is to land your entire local commit stack onto the
 *   `--remote <name>`: Your fork's remote name (default: `origin`).
 *   `--upstream-remote <name>`: The upstream remote name (default: `upstream`).
 *   `--prefix <prefix>`: Prefix for temporary branches (default: `dev/`).
-*   `--no-merge`: Create all PRs but do not merge them. This is useful if you want to inspect the PRs on GitHub before they are landed.
-*   `--auto-merge`: Enable auto-merge for each PR instead of waiting to merge sequentially.
-*   `-f`, `--force`: Force push temporary branches.
+*   `--no-merge`: Create a PR but do not merge it. Only supported for a single commit.
+*   `--auto-merge`: Enable auto-merge for a PR. Only supported for a single commit.
 *   `--draft`: Create PRs as drafts.
 *   `--dry-run`: Print commands without executing them.
 
 ## How It Works
 
-The script operates as a state machine, repeating a cycle until your local branch has no more commits to land. This is the only way to reliably land a stack in a squash-and-merge repository while preserving commit history.
+The script operates as a state machine, repeating a cycle until your local branch has no more commits to land.
 
 **The Loop:**
 
-1.  **Rebase**: The script begins by rebasing your current branch onto the latest `upstream/main`. This ensures the first commit to be processed is clean.
+1.  **Rebase**: The script begins by rebasing your current branch onto the latest `upstream/main`.
 2.  **Get Top Commit**: It identifies the oldest commit on your branch that is not yet on `main`.
 3.  **Create Branch & PR**: It creates a temporary branch pointing to that single commit, pushes it, and opens a pull request.
 4.  **Wait & Merge**:
-    *   If `--no-merge` is **not** used, the script polls the GitHub API, waiting for the PR to become mergeable (e.g., for CI to pass).
-    *   Once mergeable, it uses a direct API call to merge the PR, providing the **exact original commit title and body**. This is the key to avoiding corrupted commit messages.
-5.  **Repeat**: The script automatically deletes the temporary remote branch and then **starts the loop over**. It goes back to step 1, rebasing your local branch (which now has one less commit) on top of the newly-updated `main`. This process continues until the branch is fully merged.
+    *   Unless `--no-merge` is specified, the script polls the GitHub API, waiting for the PR to become mergeable.
+    *   Once mergeable, it uses a direct API call to merge the PR, providing the **exact original commit title and body**.
+5.  **Repeat**: The script then **starts the loop over**. It goes back to step 1, rebasing your local branch on top of the newly-updated `main`. This process continues until the branch is fully merged.
