@@ -71,7 +71,10 @@ class LLVMPRAutomator:
         url = result.stdout.strip()
         match = re.search(r"github\.com[/:]([\w-]+/[\w-]+)", url)
         if not match:
-            print(f"Error: Could not parse repository slug from remote URL: {url}", file=sys.stderr)
+            print(
+                f"Error: Could not parse repository slug from remote URL: {url}",
+                file=sys.stderr,
+            )
             sys.exit(1)
         return match.group(1).replace(".git", "")
 
@@ -168,10 +171,15 @@ class LLVMPRAutomator:
         """Creates a GitHub Pull Request using the gh CLI."""
         print(f"Creating pull request for '{head_branch}' targeting '{base_branch}'")
         pr_command = [
-            "gh", "pr", "create",
-            "--repo", self.repo_slug,
-            "--base", base_branch,
-            "--head", head_branch,
+            "gh",
+            "pr",
+            "create",
+            "--repo",
+            self.repo_slug,
+            "--base",
+            base_branch,
+            "--head",
+            head_branch,
             "--fill",
         ]
         if self.args.draft:
@@ -232,7 +240,7 @@ class LLVMPRAutomator:
                         pr_url = self._create_pr(temp_branch, base_for_next_pr)
                         if pr_url:
                             last_pr_url = pr_url
-                    
+
                     # Prepare for the next iteration
                     base_for_next_branch = temp_branch
                     base_for_next_pr = temp_branch
@@ -242,7 +250,7 @@ class LLVMPRAutomator:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-            
+
             if last_pr_url and (self.args.merge or self.args.auto_merge):
                 self._merge_pr(last_pr_url)
 
@@ -265,7 +273,9 @@ def check_prerequisites(dry_run: bool = False):
         read_only=True,
     )
     if result.returncode != 0 or result.stdout.strip() != "true":
-        print("Error: This script must be run inside a git repository.", file=sys.stderr)
+        print(
+            "Error: This script must be run inside a git repository.", file=sys.stderr
+        )
         sys.exit(1)
     print("Prerequisites met.")
 
@@ -338,7 +348,9 @@ def main():
     args = parser.parse_args()
 
     if args.auto_merge and args.merge:
-        print("Error: --auto-merge and --merge are mutually exclusive.", file=sys.stderr)
+        print(
+            "Error: --auto-merge and --merge are mutually exclusive.", file=sys.stderr
+        )
         sys.exit(1)
 
     check_prerequisites(args.dry_run)
