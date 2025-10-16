@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""A script to automate the creation and landing of a stack of Pull Requests."""
 
 import argparse
 import re
@@ -10,14 +11,17 @@ from typing import List, Optional
 
 
 class Printer:
+    """Handles all output and command execution, with options for dry runs and verbosity."""
     def __init__(
         self, dry_run: bool = False, verbose: bool = False, quiet: bool = False
     ):
+        """Initializes the Printer with dry_run, verbose, and quiet settings."""
         self.dry_run = dry_run
         self.verbose = verbose
         self.quiet = quiet
 
     def print(self, message: str, file=sys.stdout):
+        """Prints a message to the specified file, respecting quiet mode."""
         if self.quiet and file == sys.stdout:
             return
         print(message, file=file)
@@ -28,9 +32,10 @@ class Printer:
         check: bool = True,
         capture_output: bool = False,
         text: bool = False,
-        input: Optional[str] = None,
+        stdin_input: Optional[str] = None,
         read_only: bool = False,
     ) -> subprocess.CompletedProcess:
+        """Runs a shell command, handling dry runs, verbosity, and errors."""
         if self.dry_run and not read_only:
             self.print(f"[Dry Run] Would run: {' '.join(command)}")
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -44,7 +49,7 @@ class Printer:
                 check=check,
                 capture_output=capture_output,
                 text=text,
-                input=input,
+                input=stdin_input,
             )
         except FileNotFoundError:
             self.print(
@@ -66,6 +71,7 @@ class Printer:
 
 
 class LLVMPRAutomator:
+    """Automates the process of creating and landing a stack of GitHub Pull Requests."""
     def __init__(self, args: argparse.Namespace, printer: Printer):
         self.args = args
         self.printer = printer
@@ -134,7 +140,7 @@ class LLVMPRAutomator:
             self._run_cmd(["git", "rebase", target])
         except subprocess.CalledProcessError as e:
             self.printer.print(
-                f"Error: The rebase operation failed, likely due to a merge conflict.",
+                "Error: The rebase operation failed, likely due to a merge conflict.",
                 file=sys.stderr,
             )
             if e.stdout:
@@ -277,7 +283,7 @@ class LLVMPRAutomator:
                 time.sleep(retry_delay)
             else:
                 self.printer.print(
-                    f"Error: Failed to merge PR for a critical reason.", file=sys.stderr
+                    "Error: Failed to merge PR for a critical reason.", file=sys.stderr
                 )
                 self.printer.print(f"--- stderr ---\n{result.stderr}", file=sys.stderr)
                 sys.exit(1)
@@ -289,6 +295,7 @@ class LLVMPRAutomator:
         sys.exit(1)
 
     def run(self):
+        """Main entry point for the automator, orchestrates the PR creation and merging process."""
         self.repo_slug = self._get_repo_slug()
         self.original_branch = self._get_current_branch()
         self.printer.print(f"On branch: {self.original_branch}")
@@ -381,6 +388,7 @@ def check_prerequisites(printer: Printer):
 
 
 def main():
+    """main entry point"""
     parser = argparse.ArgumentParser(
         description="Create and land a stack of Pull Requests."
     )
