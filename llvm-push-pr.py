@@ -331,7 +331,15 @@ def main():
     GITHUB_REMOTE_NAME = "origin"
     UPSTREAM_REMOTE_NAME = "upstream"
     BASE_BRANCH = "main"
-    BRANCH_PREFIX = "dev/"
+
+    # Get user login to set a default prefix
+    try:
+        user_login = subprocess.check_output(
+            ["gh", "api", "user", "--jq", ".login"], text=True
+        ).strip()
+        default_prefix = f"{user_login}/"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        default_prefix = "dev/"
 
     parser.add_argument(
         "--base",
@@ -350,8 +358,8 @@ def main():
     )
     parser.add_argument(
         "--prefix",
-        default=BRANCH_PREFIX,
-        help=f"Prefix for temporary branches (default: {BRANCH_PREFIX})",
+        default=default_prefix,
+        help=f"Prefix for temporary branches (default: {default_prefix})",
     )
     parser.add_argument(
         "--draft", action="store_true", help="Create pull requests as drafts."

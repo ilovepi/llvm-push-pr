@@ -41,7 +41,7 @@ The script's default behavior is to land your entire local commit stack onto the
 *   `--base <branch>`: The base branch to target (default: `main`).
 *   `--remote <name>`: Your fork's remote name (default: `origin`).
 *   `--upstream-remote <name>`: The upstream remote name (default: `upstream`).
-*   `--prefix <prefix>`: Prefix for temporary branches (default: `dev/`).
+*   `--prefix <prefix>`: Prefix for temporary branches. Defaults to your GitHub username (e.g., `your-username/`). Falls back to `dev/` if the username cannot be fetched.
 *   `--no-merge`: Create a PR but do not merge it. Only supported for a single commit.
 *   `--auto-merge`: Enable auto-merge for a PR. Only supported for a single commit.
 *   `--draft`: Create PRs as drafts.
