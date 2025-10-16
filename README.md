@@ -46,6 +46,14 @@ The script's default behavior is to land your entire local commit stack onto the
 *   `--auto-merge`: Enable auto-merge for a PR. Only supported for a single commit.
 *   `--draft`: Create PRs as drafts.
 *   `--dry-run`: Print commands without executing them.
+*   `-v`, `--verbose`: Print all commands being run.
+*   `-q`, `--quiet`: Print only essential output and errors.
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Print all commands being run."
+    )
+
+    args = parser.parse_args()
+    if args.prefix and not args.prefix.endswith("/"):
 
 ## How It Works
 
