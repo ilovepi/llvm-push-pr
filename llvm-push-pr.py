@@ -105,42 +105,56 @@ class LLVMPRAutomator:
         )
         return result.stdout.strip()
 
-    def _rebase_current_branch(self):
-        """Rebases the current branch on top of the upstream base."""
-        target = f"{self.args.upstream_remote}/{self.args.base}"
-        self.printer.print(
-            f"\nFetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
+    def _check_work_tree_is_clean(self):
+        """Exits if the git work tree has uncommitted or unstaged changes."""
+        result = self._run_cmd(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            read_only=True,
         )
-        self._run_cmd(["git", "fetch", self.args.upstream_remote, self.args.base])
-        try:
-            try:
-                self._run_cmd(["git", "rebase", target])
-            except subprocess.CalledProcessError as e:
-                stderr = e.stderr.lower() if e.stderr else ""
-                if "unstaged changes" in stderr or "dirty" in stderr:
-                    self.printer.print(
-                        "\nError: Rebase failed due to uncommitted local changes.",
-                        file=sys.stderr,
-                    )
-                    self.printer.print(
-                        "Please stash or commit your changes before running.",
-                        file=sys.stderr,
-                    )
-                else:
-                    self.printer.print(
-                        "\nError: The rebase operation failed, likely due to a merge conflict.",
-                        file=sys.stderr,
-                    )
-                    self.printer.print("Aborting rebase...", file=sys.stderr)
-                    self._run_cmd(["git", "rebase", "--abort"], check=False)
-                sys.exit(1)
-        except subprocess.CalledProcessError:
+        if result.stdout.strip():
             self.printer.print(
-                "\nError: The rebase operation failed. This is likely due to a merge conflict or uncommitted local changes.",
+                "Error: Your working tree is dirty. Please stash or commit your changes.",
                 file=sys.stderr,
             )
-            self.printer.print("Aborting rebase...", file=sys.stderr)
-            self._run_cmd(["git", "rebase", "--abort"], check=False)
+            sys.exit(1)
+
+    def _rebase_current_branch(self):
+        """Rebases the current branch on top of the upstream base."""
+        self._check_work_tree_is_clean()
+
+        target = f"{self.args.upstream_remote}/{self.args.base}"
+        self.printer.print(
+            f"Fetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
+        )
+        self._run_cmd(["git", "fetch", self.args.upstream_remote, self.args.base])
+
+        try:
+            self._run_cmd(["git", "rebase", target])
+        except subprocess.CalledProcessError as e:
+            self.printer.print(
+                f"Error: The rebase operation failed, likely due to a merge conflict.",
+                file=sys.stderr,
+            )
+            if e.stdout:
+                self.printer.print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
+            if e.stderr:
+                self.printer.print(f"--- stderr ---\n{e.stderr}", file=sys.stderr)
+
+            # Check if rebase is in progress before aborting
+            rebase_status_result = self._run_cmd(
+                ["git", "status", "--verify-status=REBASE_HEAD"],
+                check=False,
+                capture_output=True,
+                text=True,
+                read_only=True,
+            )
+            if (
+                rebase_status_result.returncode == 0
+            ):  # REBASE_HEAD exists, so rebase is in progress
+                self.printer.print("Aborting rebase...", file=sys.stderr)
+                self._run_cmd(["git", "rebase", "--abort"], check=False)
             sys.exit(1)
 
     def _get_commit_stack(self) -> List[str]:
@@ -185,7 +199,9 @@ class LLVMPRAutomator:
     def _sanitize_for_branch_name(self, text: str) -> str:
         """Sanitizes a string to be used as a git branch name."""
         sanitized = re.sub(r"[^\w\s-]", "", text).strip().lower()
-        return re.sub(r"[-\s]+", "-", sanitized)
+        sanitized = re.sub(r"[-\s]+", "-", sanitized)
+        # Use "auto-pr" as a fallback.
+        return sanitized or "auto-pr"
 
     def _create_and_push_branch_for_commit(
         self, commit_hash: str, base_branch_name: str, index: int
@@ -193,7 +209,7 @@ class LLVMPRAutomator:
         """Creates and pushes a temporary branch pointing to a specific commit."""
         branch_name = f"{self.args.prefix}{base_branch_name}-{index + 1}"
         commit_title, _ = self._get_commit_details(commit_hash)
-        self.printer.print(f"\nProcessing commit {commit_hash[:7]}: {commit_title}")
+        self.printer.print(f"Processing commit {commit_hash[:7]}: {commit_title}")
         self.printer.print(f"Creating and pushing temporary branch '{branch_name}'")
 
         self._run_cmd(["git", "branch", "-f", branch_name, commit_hash])
@@ -300,7 +316,7 @@ class LLVMPRAutomator:
                 )
                 sys.exit(1)
 
-            self.printer.print(f"\nFound {len(initial_commits)} commit(s) to process.")
+            self.printer.print(f"Found {len(initial_commits)} commit(s) to process.")
             branch_base_name = self.original_branch
             if self.original_branch in ["main", "master"]:
                 first_commit_title, _ = self._get_commit_details(initial_commits[0])
@@ -312,7 +328,7 @@ class LLVMPRAutomator:
 
                 commits = self._get_commit_stack()
                 if not commits:
-                    self.printer.print("\nSuccess! All commits have been landed.")
+                    self.printer.print("Success! All commits have been landed.")
                     break
 
                 commit_to_process = commits[0]
@@ -330,16 +346,16 @@ class LLVMPRAutomator:
 
     def _cleanup(self):
         """Cleans up by returning to the original branch and deleting all temporary branches."""
-        self.printer.print(f"\nReturning to original branch: {self.original_branch}")
+        self.printer.print(f"Returning to original branch: {self.original_branch}")
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
             self.printer.print("Cleaning up temporary local branches...")
             self._run_cmd(["git", "branch", "-D"] + self.created_branches)
             self.printer.print("Cleaning up temporary remote branches...")
-            for branch in self.created_branches:
-                self._run_cmd(
-                    ["git", "push", self.args.remote, "--delete", branch], check=False
-                )
+            self._run_cmd(
+                ["git", "push", self.args.remote, "--delete"] + self.created_branches,
+                check=False,
+            )
 
 
 def check_prerequisites(printer: Printer):
