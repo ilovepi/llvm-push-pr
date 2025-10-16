@@ -340,6 +340,8 @@ class LLVMPRAutomator:
 
                 if not self.args.no_merge:
                     self._merge_pr(pr_url)
+                    if temp_branch in self.created_branches:
+                        self.created_branches.remove(temp_branch)
 
         finally:
             self._cleanup()
