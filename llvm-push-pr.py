@@ -4,12 +4,15 @@ import argparse
 import re
 import subprocess
 import sys
+import json
 import time
 from typing import List, Optional
 
 
 class Printer:
-    def __init__(self, dry_run: bool = False, verbose: bool = False, quiet: bool = False):
+    def __init__(
+        self, dry_run: bool = False, verbose: bool = False, quiet: bool = False
+    ):
         self.dry_run = dry_run
         self.verbose = verbose
         self.quiet = quiet
@@ -51,12 +54,14 @@ class Printer:
             sys.exit(1)
         except subprocess.CalledProcessError as e:
             if check:
-                self.print(f"Error running command: {' '.join(command)}", file=sys.stderr)
+                self.print(
+                    f"Error running command: {' '.join(command)}", file=sys.stderr
+                )
                 if e.stdout:
                     self.print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
                 if e.stderr:
                     self.print(f"--- stderr ---\n{e.stderr}", file=sys.stderr)
-                sys.exit(1)
+                raise e
             return e
 
 
@@ -107,7 +112,36 @@ class LLVMPRAutomator:
             f"\nFetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
         )
         self._run_cmd(["git", "fetch", self.args.upstream_remote, self.args.base])
-        self._run_cmd(["git", "rebase", target])
+        try:
+            try:
+                self._run_cmd(["git", "rebase", target])
+            except subprocess.CalledProcessError as e:
+                stderr = e.stderr.lower() if e.stderr else ""
+                if "unstaged changes" in stderr or "dirty" in stderr:
+                    self.printer.print(
+                        "\nError: Rebase failed due to uncommitted local changes.",
+                        file=sys.stderr,
+                    )
+                    self.printer.print(
+                        "Please stash or commit your changes before running.",
+                        file=sys.stderr,
+                    )
+                else:
+                    self.printer.print(
+                        "\nError: The rebase operation failed, likely due to a merge conflict.",
+                        file=sys.stderr,
+                    )
+                    self.printer.print("Aborting rebase...", file=sys.stderr)
+                    self._run_cmd(["git", "rebase", "--abort"], check=False)
+                sys.exit(1)
+        except subprocess.CalledProcessError:
+            self.printer.print(
+                "\nError: The rebase operation failed. This is likely due to a merge conflict or uncommitted local changes.",
+                file=sys.stderr,
+            )
+            self.printer.print("Aborting rebase...", file=sys.stderr)
+            self._run_cmd(["git", "rebase", "--abort"], check=False)
+            sys.exit(1)
 
     def _get_commit_stack(self) -> List[str]:
         """Gets the stack of commits between the current branch's HEAD and its merge base with upstream."""
@@ -203,7 +237,9 @@ class LLVMPRAutomator:
         max_retries = 10
         retry_delay = 5  # seconds
         for i in range(max_retries):
-            self.printer.print(f"Attempting to merge {pr_url} (attempt {i+1}/{max_retries})...")
+            self.printer.print(
+                f"Attempting to merge {pr_url} (attempt {i+1}/{max_retries})..."
+            )
             merge_cmd = ["gh", "pr", "merge", pr_url, "--squash", "--delete-branch"]
             if self.args.auto_merge:
                 merge_cmd.insert(3, "--auto")
@@ -219,7 +255,9 @@ class LLVMPRAutomator:
 
             stderr = result.stderr.lower()
             if "pull request is not mergeable" in stderr:
-                self.printer.print(f"PR not mergeable yet. Retrying in {retry_delay} seconds...")
+                self.printer.print(
+                    f"PR not mergeable yet. Retrying in {retry_delay} seconds..."
+                )
                 time.sleep(retry_delay)
             else:
                 self.printer.print(
@@ -334,11 +372,10 @@ def main():
 
     # Get user login to set a default prefix
     try:
-        user_login = subprocess.check_output(
-            ["gh", "api", "user", "--jq", ".login"], text=True
-        ).strip()
+        user_json = subprocess.check_output(["gh", "api", "user"], text=True)
+        user_login = json.loads(user_json)["login"]
         default_prefix = f"{user_login}/"
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
         default_prefix = "dev/"
 
     parser.add_argument(
@@ -380,7 +417,10 @@ def main():
         "-v", "--verbose", action="store_true", help="Print all commands being run."
     )
     group.add_argument(
-        "-q", "--quiet", action="store_true", help="Print only essential output and errors."
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Print only essential output and errors.",
     )
 
     args = parser.parse_args()
