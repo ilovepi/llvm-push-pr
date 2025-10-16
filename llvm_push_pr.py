@@ -135,6 +135,11 @@ class GitHubAPI:
             self.printer.print(f"Pull request created: {pr_url}")
         return pr_url
 
+    def get_repo_settings(self) -> dict:
+        """Gets repository settings."""
+        response = self._request("get", f"/repos/{self.repo_slug}")
+        return response.json()
+
     def merge_pr(self, pr_url: str):
         """Merges a PR, retrying if it's not yet mergeable."""
         if not pr_url:
@@ -180,8 +185,7 @@ class GitHubAPI:
                     )
                     self.printer.print("Successfully merged.")
                     time.sleep(2)
-                    self.delete_branch(head_branch)
-                    return
+                    return head_branch
                 except requests.exceptions.RequestException as e:
                     if e.response and e.response.status_code == 405:
                         self.printer.print(
@@ -207,8 +211,14 @@ class GitHubAPI:
         )
         sys.exit(1)
 
-    def delete_branch(self, branch_name: str):
+    def delete_branch(self, branch_name: str, default_branch: Optional[str] = None):
         """Deletes a remote branch."""
+        if default_branch and branch_name == default_branch:
+            self.printer.print(
+                f"Error: Refusing to delete the default branch '{branch_name}'.",
+                file=sys.stderr,
+            )
+            return
         self.printer.print(f"Deleting remote branch '{branch_name}'")
         try:
             self._request(
@@ -248,6 +258,7 @@ class LLVMPRAutomator:
         self.original_branch: str = ""
         self.repo_slug: str = ""
         self.created_branches: List[str] = []
+        self.repo_settings: dict = {}
 
     def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs):
         """Wrapper for run_command that passes the dry_run flag."""
@@ -397,6 +408,7 @@ class LLVMPRAutomator:
     def run(self):
         """Main entry point for the automator, orchestrates the PR creation and merging process."""
         self.repo_slug = self._get_repo_slug()
+        self.repo_settings = self.github_api.get_repo_settings()
         self.original_branch = self._get_current_branch()
         self.printer.print(f"On branch: {self.original_branch}")
 
@@ -456,7 +468,13 @@ class LLVMPRAutomator:
                     if self.args.auto_merge:
                         self.printer.print("Auto-merge via API is not implemented yet.")
                     else:
-                        self.github_api.merge_pr(pr_url)
+                        merged_branch = self.github_api.merge_pr(pr_url)
+                        if merged_branch and not self.repo_settings.get(
+                            "delete_branch_on_merge"
+                        ):
+                            self.github_api.delete_branch(
+                                merged_branch, self.repo_settings.get("default_branch")
+                            )
 
                     if temp_branch in self.created_branches:
                         self.created_branches.remove(temp_branch)
