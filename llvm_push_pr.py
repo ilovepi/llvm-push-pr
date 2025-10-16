@@ -105,7 +105,7 @@ class GitHubAPI:
             )
             if e.response is not None:
                 self.printer.print(f"Response: {e.response.text}", file=sys.stderr)
-            sys.exit(1)
+            raise
 
     def get_user_login(self) -> str:
         """Gets the current user's login name."""
@@ -215,10 +215,22 @@ class GitHubAPI:
                 "delete", f"/repos/{self.repo_slug}/git/refs/heads/{branch_name}"
             )
         except requests.exceptions.RequestException as e:
+            if (
+                e.response is not None
+                and e.response.status_code == 422
+                and "Reference does not exist" in e.response.text
+            ):
+                if self.printer.verbose:
+                    self.printer.print(
+                        f"Warning: Remote branch '{branch_name}' was already deleted, skipping deletion.",
+                        file=sys.stderr,
+                    )
+                return
             self.printer.print(
                 f"Could not delete remote branch '{branch_name}': {e}",
                 file=sys.stderr,
             )
+            raise
 
 
 class LLVMPRAutomator:
