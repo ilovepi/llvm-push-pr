@@ -159,6 +159,28 @@ class TestGitHubAPI(unittest.TestCase):
         self.mock_printer.dry_run = False
         self.github_api = GitHubAPI("test/repo", self.mock_printer, "test_token")
 
+    @patch("requests.request")
+    def test_delete_branch_already_deleted(self, mock_request):
+        """Test that delete_branch handles a 422 error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 422
+        mock_response.text = "Reference does not exist"
+        mock_response.raise_for_status.side_effect = requests.exceptions.RequestException(
+            response=mock_response
+        )
+        mock_request.return_value = mock_response
+
+        self.github_api.delete_branch("already-deleted-branch")
+        expected_calls = [
+            call("Deleting remote branch 'already-deleted-branch'"),
+            call(
+                "Error making API request to https://api.github.com/repos/test/repo/git/refs/heads/already-deleted-branch: ",
+                file=sys.stderr,
+            ),
+            call("Response: Reference does not exist", file=sys.stderr),
+        ]
+        self.mock_printer.print.assert_has_calls(expected_calls)
+
     @patch("requests.request", side_effect=requests.exceptions.RequestException)
     def test_delete_branch_error(self, mock_request):
         """Test that delete_branch handles request exceptions."""
@@ -415,6 +437,21 @@ class TestLLVMPRAutomator(unittest.TestCase):
                 call(["git", "push", "origin", "test/base-branch-1"]),
             ]
         )
+
+    def test_rebase_current_branch_conflict_no_rebase_in_progress(self):
+        """Test that _rebase_current_branch exits on rebase conflict when no rebase is in progress."""
+        # Un-mock the method for this test
+        del self.automator._rebase_current_branch
+        self.automator._run_cmd.side_effect = [
+            subprocess.CompletedProcess([], 0, ""),  # git status
+            subprocess.CompletedProcess([], 0, ""),  # git fetch
+            subprocess.CalledProcessError(1, "cmd"),  # git rebase
+            subprocess.CompletedProcess(
+                [], 1, ""
+            ),  # git status (in except block, no rebase in progress)
+        ]
+        with self.assertRaises(SystemExit):
+            self.automator._rebase_current_branch()
 
     def test_rebase_current_branch_conflict(self):
         """Test that _rebase_current_branch exits on rebase conflict."""
