@@ -21,7 +21,11 @@ class TestMain(unittest.TestCase):
     @patch("llvm_push_pr.GitHubAPI")
     @patch("os.getenv", return_value="test_token")
     def test_main_get_user_login_error(
-        self, mock_getenv, mock_github_api_class, mock_command_runner_class, mock_check_prereqs
+        self,
+        mock_getenv,
+        mock_github_api_class,
+        mock_command_runner_class,
+        mock_check_prereqs,
     ):
         """Test that main handles errors when fetching user login."""
         mock_github_api_instance = mock_github_api_class.return_value
@@ -72,7 +76,11 @@ class TestMain(unittest.TestCase):
     @patch("llvm_push_pr.GitHubAPI")
     @patch("llvm_push_pr.CommandRunner")
     def test_main(
-        self, mock_command_runner_class, mock_github_api, mock_automator, mock_check_prereqs
+        self,
+        mock_command_runner_class,
+        mock_github_api,
+        mock_automator,
+        mock_check_prereqs,
     ):
         """Test the main function."""
         mock_command_runner_instance = mock_command_runner_class.return_value
@@ -165,8 +173,8 @@ class TestGitHubAPI(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.status_code = 422
         mock_response.text = "Reference does not exist"
-        mock_response.raise_for_status.side_effect = requests.exceptions.RequestException(
-            response=mock_response
+        mock_response.raise_for_status.side_effect = (
+            requests.exceptions.RequestException(response=mock_response)
         )
         mock_request.return_value = mock_response
 
@@ -278,8 +286,8 @@ class TestGitHubAPI(unittest.TestCase):
             "head": {"ref": "feature-branch"},
         }
         mock_405_response = MagicMock()
-        mock_405_response.raise_for_status.side_effect = requests.exceptions.RequestException(
-            response=MagicMock(status_code=405)
+        mock_405_response.raise_for_status.side_effect = (
+            requests.exceptions.RequestException(response=MagicMock(status_code=405))
         )
         mock_success_response = MagicMock()
 

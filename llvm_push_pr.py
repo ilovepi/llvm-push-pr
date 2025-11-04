@@ -601,10 +601,11 @@ def main():
     parser.add_argument(
         "--draft", action="store_true", help="Create pull requests as drafts."
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--no-merge", action="store_true", help="Create PRs but do not merge them."
     )
-    parser.add_argument(
+    group.add_argument(
         "--auto-merge",
         action="store_true",
         help="Enable auto-merge for each PR instead of attempting to merge immediately.",
@@ -627,7 +628,9 @@ def main():
     if args.prefix and not args.prefix.endswith("/"):
         args.prefix += "/"
 
-    command_runner = CommandRunner(dry_run=args.dry_run, verbose=args.verbose, quiet=args.quiet)
+    command_runner = CommandRunner(
+        dry_run=args.dry_run, verbose=args.verbose, quiet=args.quiet
+    )
     check_prerequisites(command_runner)
 
     # Get repo slug from git remote url
