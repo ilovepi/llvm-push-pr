@@ -450,28 +450,31 @@ class LLVMPRAutomator:
                 self.runner.print("No new commits to process.")
                 return
 
-            if self.args.auto_merge and len(initial_commits) > 1:
-                self.runner.print(
-                    "Error: --auto-merge is only supported for a single commit.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            num_commits = len(initial_commits)
 
-            if self.args.no_merge and len(initial_commits) > 1:
-                self.runner.print(
-                    "Error: --no-merge is only supported for a single commit. "
-                    "For stacks, the script must merge sequentially.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            if num_commits > 1:
+                if self.args.auto_merge:
+                    self.runner.print(
+                        "Error: --auto-merge is only supported for a single commit.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
 
-            self.runner.print(f"Found {len(initial_commits)} commit(s) to process.")
+                if self.args.no_merge:
+                    self.runner.print(
+                        "Error: --no-merge is only supported for a single commit. "
+                        "For stacks, the script must merge sequentially.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+
+            self.runner.print(f"Found {num_commits} commit(s) to process.")
             branch_base_name = self.original_branch
             if self.original_branch in ["main", "master"]:
                 first_commit_title, _ = self._get_commit_details(initial_commits[0])
                 branch_base_name = self._sanitize_for_branch_name(first_commit_title)
 
-            for i in range(len(initial_commits)):
+            for i in range(num_commits):
                 if i > 0:
                     self._rebase_current_branch()
 
