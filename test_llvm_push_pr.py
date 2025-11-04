@@ -247,6 +247,33 @@ class TestGitHubAPI(unittest.TestCase):
             self.github_api.merge_pr("invalid_url")
 
     @patch("requests.request")
+    def test_merge_pr_405_retry(self, mock_request):
+        """Test that merge_pr retries on a 405 error."""
+        mock_mergeable_response = MagicMock()
+        mock_mergeable_response.json.return_value = {
+            "mergeable": True,
+            "title": "Test PR",
+            "head": {"ref": "feature-branch"},
+        }
+        mock_405_response = MagicMock()
+        mock_405_response.raise_for_status.side_effect = requests.exceptions.RequestException(
+            response=MagicMock(status_code=405)
+        )
+        mock_success_response = MagicMock()
+
+        mock_request.side_effect = [
+            mock_mergeable_response,
+            mock_405_response,
+            mock_mergeable_response,  # For the retry
+            mock_success_response,  # For the successful merge
+        ]
+
+        with patch("time.sleep"):  # Don't actually sleep
+            self.github_api.merge_pr("https://github.com/test/repo/pull/1")
+
+        self.assertEqual(mock_request.call_count, 4)
+
+    @patch("requests.request")
     def test_merge_pr_retry(self, mock_request):
         """Test that merge_pr retries if the PR is not initially mergeable."""
         mock_not_mergeable_response = MagicMock()
