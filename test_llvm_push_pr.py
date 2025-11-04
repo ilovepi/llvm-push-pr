@@ -7,7 +7,7 @@ import sys
 
 from llvm_push_pr import (
     LLVMPRAutomator,
-    Printer,
+    CommandRunner,
     GitHubAPI,
     check_prerequisites,
     main,
@@ -17,11 +17,11 @@ from llvm_push_pr import (
 class TestMain(unittest.TestCase):
     @patch("sys.argv", ["llvm_push_pr.py"])
     @patch("llvm_push_pr.check_prerequisites")
-    @patch("llvm_push_pr.Printer")
+    @patch("llvm_push_pr.CommandRunner")
     @patch("llvm_push_pr.GitHubAPI")
     @patch("os.getenv", return_value="test_token")
     def test_main_get_user_login_error(
-        self, mock_getenv, mock_github_api_class, mock_printer_class, mock_check_prereqs
+        self, mock_getenv, mock_github_api_class, mock_command_runner_class, mock_check_prereqs
     ):
         """Test that main handles errors when fetching user login."""
         mock_github_api_instance = mock_github_api_class.return_value
@@ -29,7 +29,7 @@ class TestMain(unittest.TestCase):
             requests.exceptions.RequestException
         )
 
-        mock_printer_instance = mock_printer_class.return_value
+        mock_command_runner_instance = mock_command_runner_class.return_value
 
         mock_automator_instance = MagicMock(spec=LLVMPRAutomator)
 
@@ -39,7 +39,7 @@ class TestMain(unittest.TestCase):
         mock_completed_process_clean_tree = MagicMock(spec=subprocess.CompletedProcess)
         mock_completed_process_clean_tree.stdout = ""
 
-        mock_printer_instance.run_command.side_effect = [
+        mock_command_runner_instance.run_command.side_effect = [
             mock_completed_process_repo_slug,  # For _get_repo_slug
             mock_completed_process_clean_tree,  # For _check_work_tree_is_clean
         ]
@@ -48,20 +48,20 @@ class TestMain(unittest.TestCase):
             "llvm_push_pr.LLVMPRAutomator", return_value=mock_automator_instance
         ):
             main()
-            mock_printer_instance.print.assert_called_with(
+            mock_command_runner_instance.print.assert_called_with(
                 "Could not fetch user login from GitHub: ",
                 file=sys.stderr,
             )
 
     @patch("sys.argv", ["llvm_push_pr.py"])
     @patch("llvm_push_pr.check_prerequisites")
-    @patch("llvm_push_pr.Printer")
-    def test_main_repo_slug_error(self, mock_printer_class, mock_check_prereqs):
+    @patch("llvm_push_pr.CommandRunner")
+    def test_main_repo_slug_error(self, mock_command_runner_class, mock_check_prereqs):
         """Test that main exits if the repo slug cannot be parsed."""
-        mock_printer_instance = mock_printer_class.return_value
+        mock_command_runner_instance = mock_command_runner_class.return_value
         mock_completed_process = MagicMock()
         mock_completed_process.stdout.strip.return_value = "invalid_url"
-        mock_printer_instance.run_command.return_value = mock_completed_process
+        mock_command_runner_instance.run_command.return_value = mock_completed_process
 
         with self.assertRaises(SystemExit):
             main()
@@ -70,17 +70,17 @@ class TestMain(unittest.TestCase):
     @patch("llvm_push_pr.check_prerequisites")
     @patch("llvm_push_pr.LLVMPRAutomator")
     @patch("llvm_push_pr.GitHubAPI")
-    @patch("llvm_push_pr.Printer")
+    @patch("llvm_push_pr.CommandRunner")
     def test_main(
-        self, mock_printer_class, mock_github_api, mock_automator, mock_check_prereqs
+        self, mock_command_runner_class, mock_github_api, mock_automator, mock_check_prereqs
     ):
         """Test the main function."""
-        mock_printer_instance = mock_printer_class.return_value
+        mock_command_runner_instance = mock_command_runner_class.return_value
         mock_completed_process = MagicMock()
         mock_completed_process.stdout.strip.return_value = (
             "git@github.com:test/repo.git"
         )
-        mock_printer_instance.run_command.return_value = mock_completed_process
+        mock_command_runner_instance.run_command.return_value = mock_completed_process
 
         main()
         mock_automator.assert_called_once()
@@ -91,46 +91,46 @@ class TestCheckPrerequisites(unittest.TestCase):
     @patch("os.getenv", return_value="test_token")
     def test_not_in_git_repo(self, mock_getenv):
         """Test that check_prerequisites exits if not in a git repo."""
-        mock_printer = MagicMock(spec=Printer)
-        mock_printer.run_command.side_effect = [
+        mock_command_runner = MagicMock(spec=CommandRunner)
+        mock_command_runner.run_command.side_effect = [
             subprocess.CompletedProcess([], 0, ""),  # git --version
             subprocess.CompletedProcess([], 1, "not a git repo"),  # git rev-parse
         ]
         with self.assertRaises(SystemExit):
-            check_prerequisites(mock_printer)
+            check_prerequisites(mock_command_runner)
 
-    @patch("llvm_push_pr.Printer.run_command")
+    @patch("llvm_push_pr.CommandRunner.run_command")
     @patch("os.getenv", return_value="test_token")
     def test_git_not_installed(self, mock_getenv, mock_run_command):
         """Test that check_prerequisites exits if git is not installed."""
         mock_run_command.side_effect = FileNotFoundError
-        mock_printer = MagicMock(spec=Printer)
+        mock_command_runner = MagicMock(spec=CommandRunner)
         with self.assertRaises(SystemExit):
-            check_prerequisites(mock_printer)
+            check_prerequisites(mock_command_runner)
 
-    @patch("llvm_push_pr.Printer.run_command")
+    @patch("llvm_push_pr.CommandRunner.run_command")
     @patch("os.getenv", return_value=None)
     def test_no_github_token(self, mock_getenv, mock_run_command):
         """Test that check_prerequisites exits if GITHUB_TOKEN is not set."""
-        mock_printer = MagicMock(spec=Printer)
+        mock_command_runner = MagicMock(spec=CommandRunner)
         with self.assertRaises(SystemExit):
-            check_prerequisites(mock_printer)
+            check_prerequisites(mock_command_runner)
 
 
-class TestPrinter(unittest.TestCase):
+class TestCommandRunner(unittest.TestCase):
     def test_print_quiet(self):
         """Test that print does not output to stdout in quiet mode."""
         with patch("builtins.print") as mock_print:
-            printer = Printer(quiet=True)
-            printer.print("test message")
+            command_runner = CommandRunner(quiet=True)
+            command_runner.print("test message")
             mock_print.assert_not_called()
 
     def test_run_command_file_not_found(self):
         """Test that run_command exits if the command is not found."""
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            printer = Printer()
+            command_runner = CommandRunner()
             with self.assertRaises(SystemExit):
-                printer.run_command(["non_existent_command"])
+                command_runner.run_command(["non_existent_command"])
 
     def test_run_command_check_false(self):
         """Test that run_command does not raise an exception when check=False."""
@@ -138,26 +138,26 @@ class TestPrinter(unittest.TestCase):
             "subprocess.run",
             side_effect=subprocess.CalledProcessError(1, "cmd"),
         ):
-            printer = Printer()
+            command_runner = CommandRunner()
             # Should not raise
-            printer.run_command(["false"], check=False)
+            command_runner.run_command(["false"], check=False)
 
     def test_run_command_error(self):
         """Test that run_command raises an exception on error."""
         with patch(
             "subprocess.run", side_effect=subprocess.CalledProcessError(1, "cmd")
         ):
-            printer = Printer()
+            command_runner = CommandRunner()
             with self.assertRaises(subprocess.CalledProcessError):
-                printer.run_command(["false"])
+                command_runner.run_command(["false"])
 
 
 class TestGitHubAPI(unittest.TestCase):
     def setUp(self):
-        self.mock_printer = MagicMock(spec=Printer)
-        self.mock_printer.verbose = False
-        self.mock_printer.dry_run = False
-        self.github_api = GitHubAPI("test/repo", self.mock_printer, "test_token")
+        self.mock_command_runner = MagicMock(spec=CommandRunner)
+        self.mock_command_runner.verbose = False
+        self.mock_command_runner.dry_run = False
+        self.github_api = GitHubAPI("test/repo", self.mock_command_runner, "test_token")
 
     @patch("requests.request")
     def test_delete_branch_already_deleted(self, mock_request):
@@ -179,14 +179,14 @@ class TestGitHubAPI(unittest.TestCase):
             ),
             call("Response: Reference does not exist", file=sys.stderr),
         ]
-        self.mock_printer.print.assert_has_calls(expected_calls)
+        self.mock_command_runner.print.assert_has_calls(expected_calls)
 
     @patch("requests.request", side_effect=requests.exceptions.RequestException)
     def test_delete_branch_error(self, mock_request):
         """Test that delete_branch handles request exceptions."""
         with self.assertRaises(requests.exceptions.RequestException):
             self.github_api.delete_branch("test-branch")
-        self.mock_printer.print.assert_called_with(
+        self.mock_command_runner.print.assert_called_with(
             "Could not delete remote branch 'test-branch': ",
             file=sys.stderr,
         )
@@ -336,10 +336,10 @@ class TestLLVMPRAutomator(unittest.TestCase):
             auto_merge=False,
             dry_run=False,
         )
-        self.mock_printer = MagicMock(spec=Printer)
+        self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_printer, self.mock_github_api
+            self.args, self.mock_command_runner, self.mock_github_api
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
@@ -662,7 +662,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator.run()
 
         self.automator._rebase_current_branch.assert_called_once()
-        self.mock_printer.print.assert_called_with("No new commits to process.")
+        self.mock_command_runner.print.assert_called_with("No new commits to process.")
         self.mock_github_api.create_pr.assert_not_called()
         self.automator._cleanup.assert_called_once()
 
@@ -735,10 +735,10 @@ if __name__ == "__main__":
 
 class TestNewFeatures(unittest.TestCase):
     def setUp(self):
-        self.mock_printer = MagicMock(spec=Printer)
-        self.mock_printer.verbose = False
-        self.mock_printer.dry_run = False
-        self.github_api = GitHubAPI("test/repo", self.mock_printer, "test_token")
+        self.mock_command_runner = MagicMock(spec=CommandRunner)
+        self.mock_command_runner.verbose = False
+        self.mock_command_runner.dry_run = False
+        self.github_api = GitHubAPI("test/repo", self.mock_command_runner, "test_token")
         self.args = argparse.Namespace(
             remote="origin",
             upstream_remote="upstream",
@@ -750,7 +750,7 @@ class TestNewFeatures(unittest.TestCase):
             dry_run=False,
         )
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_printer, self.github_api
+            self.args, self.mock_command_runner, self.github_api
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
@@ -803,7 +803,7 @@ class TestNewFeatures(unittest.TestCase):
     def test_delete_branch_refuses_default(self):
         """Test that delete_branch refuses to delete the default branch."""
         self.github_api.delete_branch("main", "main")
-        self.mock_printer.print.assert_called_with(
+        self.mock_command_runner.print.assert_called_with(
             "Error: Refusing to delete the default branch 'main'.",
             file=sys.stderr,
         )
