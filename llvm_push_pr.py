@@ -211,6 +211,36 @@ class GitHubAPI:
         )
         sys.exit(1)
 
+    def enable_auto_merge(self, pr_url: str):
+        """Enables auto-merge for a pull request."""
+        if not pr_url:
+            return
+
+        if self.printer.dry_run:
+            self.printer.print(f"[Dry Run] Would enable auto-merge for {pr_url}")
+            return
+
+        pr_number_match = re.search(r"/pull/(\d+)", pr_url)
+        if not pr_number_match:
+            self.printer.print(
+                f"Could not extract PR number from URL: {pr_url}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        pr_number = pr_number_match.group(1)
+
+        self.printer.print(f"Enabling auto-merge for {pr_url}...")
+        data = {
+            "enabled": True,
+            "merge_method": "squash",
+        }
+        self._request(
+            "put",
+            f"/repos/{self.repo_slug}/pulls/{pr_number}/auto-merge",
+            json=data,
+        )
+        self.printer.print("Auto-merge enabled.")
+
     def delete_branch(self, branch_name: str, default_branch: Optional[str] = None):
         """Deletes a remote branch."""
         if default_branch and branch_name == default_branch:
@@ -466,7 +496,7 @@ class LLVMPRAutomator:
 
                 if not self.args.no_merge:
                     if self.args.auto_merge:
-                        self.printer.print("Auto-merge via API is not implemented yet.")
+                        self.github_api.enable_auto_merge(pr_url)
                     else:
                         merged_branch = self.github_api.merge_pr(pr_url)
                         if merged_branch and not self.repo_settings.get(

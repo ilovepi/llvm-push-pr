@@ -160,20 +160,19 @@ class TestGitHubAPI(unittest.TestCase):
         self.github_api = GitHubAPI("test/repo", self.mock_printer, "test_token")
 
     @patch("requests.request", side_effect=requests.exceptions.RequestException)
-    @patch("sys.exit")
-    def test_delete_branch_error(self, mock_sys_exit, mock_request):
+    def test_delete_branch_error(self, mock_request):
         """Test that delete_branch handles request exceptions."""
-        self.github_api.delete_branch("test-branch")
+        with self.assertRaises(requests.exceptions.RequestException):
+            self.github_api.delete_branch("test-branch")
         self.mock_printer.print.assert_called_with(
-            "Error making API request to https://api.github.com/repos/test/repo/git/refs/heads/test-branch: ",
+            "Could not delete remote branch 'test-branch': ",
             file=sys.stderr,
         )
-        mock_sys_exit.assert_called_once_with(1)
 
     @patch("requests.request", side_effect=requests.exceptions.RequestException)
     def test_request_error(self, mock_request):
-        """Test that _request exits on a request exception."""
-        with self.assertRaises(SystemExit):
+        """Test that _request raises on a request exception."""
+        with self.assertRaises(requests.exceptions.RequestException):
             self.github_api._request("get", "/user")
 
     @patch("requests.request")
@@ -268,13 +267,12 @@ class TestGitHubAPI(unittest.TestCase):
             mock_not_mergeable_response,
             mock_mergeable_response,
             mock_merge_response,  # For the merge call
-            mock_merge_response,  # For the delete branch call
         ]
 
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
-        self.assertEqual(mock_request.call_count, 4)
+        self.assertEqual(mock_request.call_count, 3)
 
 
 class TestLLVMPRAutomator(unittest.TestCase):
@@ -502,6 +500,15 @@ class TestLLVMPRAutomator(unittest.TestCase):
             "https://github.com/test/repo/pull/1",
             "https://github.com/test/repo/pull/2",
         ]
+        self.mock_github_api.merge_pr.side_effect = [
+            "test/feature-branch-1",
+            "test/feature-branch-2",
+        ]
+        self.mock_github_api.delete_branch = MagicMock()
+        self.automator.repo_settings = {"delete_branch_on_merge": False}
+        self.mock_github_api.get_repo_settings = MagicMock(
+            return_value={"delete_branch_on_merge": False}
+        )
 
         self.automator.run()
 
@@ -511,6 +518,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         )
         self.assertEqual(self.mock_github_api.create_pr.call_count, 2)
         self.assertEqual(self.mock_github_api.merge_pr.call_count, 2)
+        self.assertEqual(self.mock_github_api.delete_branch.call_count, 2)
 
         # Verify the calls were made in the correct order
         self.automator._create_and_push_branch_for_commit.assert_has_calls(
@@ -541,6 +549,12 @@ class TestLLVMPRAutomator(unittest.TestCase):
             [
                 call("https://github.com/test/repo/pull/1"),
                 call("https://github.com/test/repo/pull/2"),
+            ]
+        )
+        self.mock_github_api.delete_branch.assert_has_calls(
+            [
+                call("test/feature-branch-1", None),
+                call("test/feature-branch-2", None),
             ]
         )
         self.automator._cleanup.assert_called_once()
@@ -653,3 +667,135 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNewFeatures(unittest.TestCase):
+    def setUp(self):
+        self.mock_printer = MagicMock(spec=Printer)
+        self.mock_printer.verbose = False
+        self.mock_printer.dry_run = False
+        self.github_api = GitHubAPI("test/repo", self.mock_printer, "test_token")
+        self.args = argparse.Namespace(
+            remote="origin",
+            upstream_remote="upstream",
+            base="main",
+            prefix="test/",
+            draft=False,
+            no_merge=False,
+            auto_merge=False,
+            dry_run=False,
+        )
+        self.automator = LLVMPRAutomator(
+            self.args, self.mock_printer, self.github_api
+        )
+        self.automator._run_cmd = MagicMock()
+        self.automator._get_repo_slug = MagicMock(return_value="test/repo")
+        self.automator._get_current_branch = MagicMock(return_value="feature-branch")
+        self.automator._get_commit_stack = MagicMock()
+        self.automator._get_commit_details = MagicMock()
+        self.automator._rebase_current_branch = MagicMock()
+        self.automator._create_and_push_branch_for_commit = MagicMock()
+        self.automator._cleanup = MagicMock()
+
+    @patch("requests.request")
+    def test_get_repo_settings(self, mock_request):
+        """Test that get_repo_settings returns the correct settings."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "delete_branch_on_merge": True,
+            "default_branch": "main",
+        }
+        mock_request.return_value = mock_response
+
+        settings = self.github_api.get_repo_settings()
+
+        self.assertEqual(settings["delete_branch_on_merge"], True)
+        self.assertEqual(settings["default_branch"], "main")
+        mock_request.assert_called_once_with(
+            "get",
+            "https://api.github.com/repos/test/repo",
+            headers={
+                "Authorization": "token test_token",
+                "Accept": "application/vnd.github.v3+json",
+            },
+            timeout=30,
+        )
+
+    @patch("requests.request")
+    def test_enable_auto_merge(self, mock_request):
+        """Test that enable_auto_merge sends the correct request."""
+        self.github_api.enable_auto_merge("https://github.com/test/repo/pull/1")
+        mock_request.assert_called_once_with(
+            "put",
+            "https://api.github.com/repos/test/repo/pulls/1/auto-merge",
+            headers={
+                "Authorization": "token test_token",
+                "Accept": "application/vnd.github.v3+json",
+            },
+            timeout=30,
+            json={"enabled": True, "merge_method": "squash"},
+        )
+
+    def test_delete_branch_refuses_default(self):
+        """Test that delete_branch refuses to delete the default branch."""
+        self.github_api.delete_branch("main", "main")
+        self.mock_printer.print.assert_called_with(
+            "Error: Refusing to delete the default branch 'main'.",
+            file=sys.stderr,
+        )
+
+    def test_run_with_auto_merge(self):
+        """Test that --auto-merge calls enable_auto_merge."""
+        self.args.auto_merge = True
+        self.automator._get_commit_stack.return_value = ["commit1"]
+        self.automator._get_commit_details.return_value = ("Title", "Body")
+        self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
+        self.github_api.create_pr = MagicMock(
+            return_value="https://github.com/test/repo/pull/1"
+        )
+        self.github_api.enable_auto_merge = MagicMock()
+        self.github_api.get_repo_settings = MagicMock(return_value={})
+
+        self.automator.run()
+
+        self.github_api.enable_auto_merge.assert_called_once_with(
+            "https://github.com/test/repo/pull/1"
+        )
+
+    def test_run_avoids_deleting_branch_when_repo_auto_deletes(self):
+        """Test that run does not delete branch if repo is set to auto-delete."""
+        self.automator._get_commit_stack.return_value = ["commit1"]
+        self.automator._get_commit_details.return_value = ("Title", "Body")
+        self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
+        self.github_api.create_pr = MagicMock(
+            return_value="https://github.com/test/repo/pull/1"
+        )
+        self.github_api.merge_pr = MagicMock(return_value="test/branch")
+        self.github_api.delete_branch = MagicMock()
+        self.github_api.get_repo_settings = MagicMock(
+            return_value={"delete_branch_on_merge": True, "default_branch": "main"}
+        )
+
+        self.automator.run()
+
+        self.github_api.merge_pr.assert_called_once()
+        self.github_api.delete_branch.assert_not_called()
+
+    def test_run_deletes_branch_when_repo_does_not_auto_delete(self):
+        """Test that run deletes branch if repo is not set to auto-delete."""
+        self.automator._get_commit_stack.return_value = ["commit1"]
+        self.automator._get_commit_details.return_value = ("Title", "Body")
+        self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
+        self.github_api.create_pr = MagicMock(
+            return_value="https://github.com/test/repo/pull/1"
+        )
+        self.github_api.merge_pr = MagicMock(return_value="test/branch")
+        self.github_api.delete_branch = MagicMock()
+        self.github_api.get_repo_settings = MagicMock(
+            return_value={"delete_branch_on_merge": False, "default_branch": "main"}
+        )
+
+        self.automator.run()
+
+        self.github_api.merge_pr.assert_called_once()
+        self.github_api.delete_branch.assert_called_once_with("test/branch", "main")
