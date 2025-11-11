@@ -12,6 +12,9 @@ from typing import List, Optional
 import requests
 
 
+# TODO(user): When submitting upstream, change this to "llvm/llvm-project".
+REPO_SLUG = "ilovepi/llvm-push-pr"
+
 class CommandRunner:
     """Handles all output and command execution, with options for dry runs and verbosity."""
 
@@ -68,32 +71,12 @@ class CommandRunner:
             raise e
 
 
-def get_repo_slug(runner: CommandRunner, remote_name: str) -> str:
-    """Gets the repository slug (e.g., 'owner/repo') from a git remote."""
-    result = runner.run_command(
-        ["git", "remote", "get-url", remote_name],
-        capture_output=True,
-        text=True,
-        read_only=True,
-    )
-    url = result.stdout.strip()
-    match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+)", url)
-    if not match:
-        runner.print(
-            f"Error: Could not parse repository slug from remote URL: {url}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return match.group(1).replace(".git", "")
-
-
 class GitHubAPI:
     """A wrapper for the GitHub API."""
 
     BASE_URL = "https://api.github.com"
 
-    def __init__(self, repo_slug: str, runner: CommandRunner, token: str):
-        self.repo_slug = repo_slug
+    def __init__(self, runner: CommandRunner, token: str):
         self.runner = runner
         self.headers = {
             "Authorization": f"token {token}",
@@ -141,14 +124,14 @@ class GitHubAPI:
             "base": base_branch,
             "draft": draft,
         }
-        response = self._request("post", f"/repos/{self.repo_slug}/pulls", json=data)
+        response = self._request("post", f"/repos/{REPO_SLUG}/pulls", json=data)
         pr_url = response.json().get("html_url")
         if not self.runner.dry_run:
             self.runner.print(f"Pull request created: {pr_url}")
         return pr_url
 
     def get_repo_settings(self) -> dict:
-        response = self._request("get", f"/repos/{self.repo_slug}")
+        response = self._request("get", f"/repos/{REPO_SLUG}")
         return response.json()
 
     def merge_pr(self, pr_url: str):
@@ -177,7 +160,7 @@ class GitHubAPI:
             )
 
             pr_data_response = self._request(
-                "get", f"/repos/{self.repo_slug}/pulls/{pr_number}"
+                "get", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
             )
             pr_data = pr_data_response.json()
             head_branch = pr_data["head"]["ref"]
@@ -190,7 +173,7 @@ class GitHubAPI:
                 try:
                     self._request(
                         "put",
-                        f"/repos/{self.repo_slug}/pulls/{pr_number}/merge",
+                        f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
                         json=merge_data,
                     )
                     self.runner.print("Successfully merged.")
@@ -245,7 +228,7 @@ class GitHubAPI:
         }
         self._request(
             "put",
-            f"/repos/{self.repo_slug}/pulls/{pr_number}/auto-merge",
+            f"/repos/{REPO_SLUG}/pulls/{pr_number}/auto-merge",
             json=data,
         )
         self.runner.print("Auto-merge enabled.")
@@ -260,7 +243,7 @@ class GitHubAPI:
         self.runner.print(f"Deleting remote branch '{branch_name}'")
         try:
             self._request(
-                "delete", f"/repos/{self.repo_slug}/git/refs/heads/{branch_name}"
+                "delete", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
             )
         except requests.exceptions.RequestException as e:
             if (
@@ -549,7 +532,7 @@ def main():
         # Create a temporary API client to get the user login.
         # We need the user login for the branch prefix and for creating PRs
         # from a fork. We don't know the repo slug yet, so pass a dummy value.
-        temp_api = GitHubAPI("", command_runner, token)
+        temp_api = GitHubAPI(command_runner, token)
         try:
             user_login = temp_api.get_user_login()
             default_prefix = f"{user_login}/"
@@ -613,10 +596,7 @@ def main():
     )
     check_prerequisites(command_runner)
 
-    # The repo slug should be for the upstream repository where the PRs will be created.
-    repo_slug = get_repo_slug(command_runner, args.upstream_remote)
-
-    github_api = GitHubAPI(repo_slug, command_runner, token)
+    github_api = GitHubAPI(command_runner, token)
     automator = LLVMPRAutomator(args, command_runner, github_api, user_login)
     automator.run()
 

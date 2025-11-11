@@ -11,7 +11,6 @@ from llvm_push_pr import (
     GitHubAPI,
     check_prerequisites,
     main,
-    get_repo_slug,
 )
 
 
@@ -57,19 +56,6 @@ class TestMain(unittest.TestCase):
                 "Could not fetch user login from GitHub: ",
                 file=sys.stderr,
             )
-
-    @patch("sys.argv", ["llvm_push_pr.py"])
-    @patch("llvm_push_pr.check_prerequisites")
-    @patch("llvm_push_pr.CommandRunner")
-    def test_main_repo_slug_error(self, mock_command_runner_class, mock_check_prereqs):
-        """Test that main exits if the repo slug cannot be parsed."""
-        mock_command_runner_instance = mock_command_runner_class.return_value
-        mock_completed_process = MagicMock()
-        mock_completed_process.stdout.strip.return_value = "invalid_url"
-        mock_command_runner_instance.run_command.return_value = mock_completed_process
-
-        with self.assertRaises(SystemExit):
-            main()
 
     @patch("sys.argv", ["llvm_push_pr.py"])
     @patch("llvm_push_pr.check_prerequisites")
@@ -163,8 +149,7 @@ class TestGitHubAPI(unittest.TestCase):
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_command_runner.verbose = False
         self.mock_command_runner.dry_run = False
-        self.github_api = GitHubAPI("test/repo", self.mock_command_runner, "test_token")
-
+        self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
     @patch("requests.request")
     def test_delete_branch_already_deleted(self, mock_request):
         """Test that delete_branch handles a 422 error."""
@@ -180,7 +165,7 @@ class TestGitHubAPI(unittest.TestCase):
         expected_calls = [
             call("Deleting remote branch 'already-deleted-branch'"),
             call(
-                "Error making API request to https://api.github.com/repos/test/repo/git/refs/heads/already-deleted-branch: ",
+                "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: ",
                 file=sys.stderr,
             ),
             call("Response: Reference does not exist", file=sys.stderr),
@@ -358,16 +343,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator._create_and_push_branch_for_commit = MagicMock()
         self.automator._cleanup = MagicMock()
 
-    def test_get_repo_slug_ssh_url(self):
-        """Test that get_repo_slug parses SSH remote URLs correctly."""
-        self.mock_command_runner.run_command.return_value = (
-            subprocess.CompletedProcess(
-                [], 0, "git@github.com:test_owner/test_repo.git"
-            )
-        )
-        repo_slug = get_repo_slug(self.mock_command_runner, "origin")
-        self.assertEqual(repo_slug, "test_owner/test_repo")
-
     def test_get_current_branch_empty(self):
         """Test that _get_current_branch handles empty git rev-parse output."""
         # Un-mock the method for this test
@@ -478,14 +453,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
         )
         with self.assertRaises(SystemExit):
             self.automator._check_work_tree_is_clean()
-
-    def test_get_repo_slug_error(self):
-        """Test that get_repo_slug exits if the remote URL is invalid."""
-        self.mock_command_runner.run_command.return_value = (
-            subprocess.CompletedProcess([], 0, "invalid_url")
-        )
-        with self.assertRaises(SystemExit):
-            get_repo_slug(self.mock_command_runner, "origin")
 
     def test_sanitize_for_branch_name_fallback(self):
         """Test the fallback case for _sanitize_for_branch_name."""
@@ -740,7 +707,7 @@ class TestNewFeatures(unittest.TestCase):
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_command_runner.verbose = False
         self.mock_command_runner.dry_run = False
-        self.github_api = GitHubAPI("test/repo", self.mock_command_runner, "test_token")
+        self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
         self.args = argparse.Namespace(
             remote="origin",
             upstream_remote="upstream",
@@ -779,7 +746,7 @@ class TestNewFeatures(unittest.TestCase):
         self.assertEqual(settings["default_branch"], "main")
         mock_request.assert_called_once_with(
             "get",
-            "https://api.github.com/repos/test/repo",
+            "https://api.github.com/repos/ilovepi/llvm-push-pr",
             headers={
                 "Authorization": "token test_token",
                 "Accept": "application/vnd.github.v3+json",
@@ -793,7 +760,7 @@ class TestNewFeatures(unittest.TestCase):
         self.github_api.enable_auto_merge("https://github.com/test/repo/pull/1")
         mock_request.assert_called_once_with(
             "put",
-            "https://api.github.com/repos/test/repo/pulls/1/auto-merge",
+            "https://api.github.com/repos/ilovepi/llvm-push-pr/pulls/1/auto-merge",
             headers={
                 "Authorization": "token test_token",
                 "Accept": "application/vnd.github.v3+json",
