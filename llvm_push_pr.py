@@ -58,16 +58,14 @@ class CommandRunner:
             )
             sys.exit(1)
         except subprocess.CalledProcessError as e:
-            if check:
-                self.print(
-                    f"Error running command: {' '.join(command)}", file=sys.stderr
-                )
-                if e.stdout:
-                    self.print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
-                if e.stderr:
-                    self.print(f"--- stderr ---\n{e.stderr}", file=sys.stderr)
-                raise e
-            return e
+            self.print(
+                f"Error running command: {' '.join(command)}", file=sys.stderr
+            )
+            if e.stdout:
+                self.print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
+            if e.stderr:
+                self.print(f"--- stderr ---\n{e.stderr}", file=sys.stderr)
+            raise e
 
 
 class GitHubAPI:

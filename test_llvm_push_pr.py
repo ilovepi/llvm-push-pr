@@ -142,22 +142,19 @@ class TestCommandRunner(unittest.TestCase):
 
     def test_run_command_check_false(self):
         """Test that run_command does not raise an exception when check=False."""
-        with patch(
-            "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "cmd"),
-        ):
-            command_runner = CommandRunner()
-            # Should not raise
-            command_runner.run_command(["false"], check=False)
+        command_runner = CommandRunner()
+        # The `false` command exists with a non-zero status code.
+        result = command_runner.run_command(["false"], check=False)
+        self.assertIsInstance(result, subprocess.CompletedProcess)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_run_command_error(self):
         """Test that run_command raises an exception on error."""
-        with patch(
-            "subprocess.run", side_effect=subprocess.CalledProcessError(1, "cmd")
-        ):
-            command_runner = CommandRunner()
-            with self.assertRaises(subprocess.CalledProcessError):
-                command_runner.run_command(["false"])
+        command_runner = CommandRunner()
+        with self.assertRaises(subprocess.CalledProcessError):
+            # The `false` command exists with a non-zero status code, which should raise
+            # an exception when check=True (the default).
+            command_runner.run_command(["false"])
 
 
 class TestGitHubAPI(unittest.TestCase):
