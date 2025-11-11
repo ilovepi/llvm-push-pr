@@ -68,6 +68,25 @@ class CommandRunner:
             raise e
 
 
+def get_repo_slug(runner: CommandRunner, remote_name: str) -> str:
+    """Gets the repository slug (e.g., 'owner/repo') from a git remote."""
+    result = runner.run_command(
+        ["git", "remote", "get-url", remote_name],
+        capture_output=True,
+        text=True,
+        read_only=True,
+    )
+    url = result.stdout.strip()
+    match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+)", url)
+    if not match:
+        runner.print(
+            f"Error: Could not parse repository slug from remote URL: {url}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return match.group(1).replace(".git", "")
+
+
 class GitHubAPI:
     """A wrapper for the GitHub API."""
 
@@ -270,34 +289,18 @@ class LLVMPRAutomator:
         args: argparse.Namespace,
         runner: CommandRunner,
         github_api: "GitHubAPI",
+        user_login: str,
     ):
         self.args = args
         self.runner = runner
         self.github_api = github_api
+        self.user_login = user_login
         self.original_branch: str = ""
-        self.repo_slug: str = ""
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
 
     def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs):
         return self.runner.run_command(command, read_only=read_only, **kwargs)
-
-    def _get_repo_slug(self) -> str:
-        result = self._run_cmd(
-            ["git", "remote", "get-url", self.args.remote],
-            capture_output=True,
-            text=True,
-            read_only=True,
-        )
-        url = result.stdout.strip()
-        match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+)", url)
-        if not match:
-            self.runner.print(
-                f"Error: Could not parse repository slug from remote URL: {url}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        return match.group(1).replace(".git", "")
 
     def _get_current_branch(self) -> str:
         result = self._run_cmd(
@@ -416,7 +419,6 @@ class LLVMPRAutomator:
         return branch_name
 
     def run(self):
-        self.repo_slug = self._get_repo_slug()
         self.repo_settings = self.github_api.get_repo_settings()
         self.original_branch = self._get_current_branch()
         self.runner.print(f"On branch: {self.original_branch}")
@@ -542,9 +544,11 @@ def main():
     command_runner = CommandRunner()
     token = os.getenv("GITHUB_TOKEN")
     default_prefix = "dev/"
+    user_login = ""
     if token:
-        # Create a temporary API client to get the user login
-        # We don't know the repo slug yet, so pass a dummy value.
+        # Create a temporary API client to get the user login.
+        # We need the user login for the branch prefix and for creating PRs
+        # from a fork. We don't know the repo slug yet, so pass a dummy value.
         temp_api = GitHubAPI("", command_runner, token)
         try:
             user_login = temp_api.get_user_login()
@@ -609,25 +613,11 @@ def main():
     )
     check_prerequisites(command_runner)
 
-    # Get repo slug from git remote url
-    result = command_runner.run_command(
-        ["git", "remote", "get-url", args.remote],
-        capture_output=True,
-        text=True,
-        read_only=True,
-    )
-    url = result.stdout.strip()
-    match = re.search(r"github\.com[/:]([\w.-]+/[\w.-]+)", url)
-    if not match:
-        command_runner.print(
-            f"Error: Could not parse repository slug from remote URL: {url}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    repo_slug = match.group(1).replace(".git", "")
+    # The repo slug should be for the upstream repository where the PRs will be created.
+    repo_slug = get_repo_slug(command_runner, args.upstream_remote)
 
     github_api = GitHubAPI(repo_slug, command_runner, token)
-    automator = LLVMPRAutomator(args, command_runner, github_api)
+    automator = LLVMPRAutomator(args, command_runner, github_api, user_login)
     automator.run()
 
 

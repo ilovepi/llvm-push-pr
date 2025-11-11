@@ -11,6 +11,7 @@ from llvm_push_pr import (
     GitHubAPI,
     check_prerequisites,
     main,
+    get_repo_slug,
 )
 
 
@@ -344,7 +345,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_command_runner, self.mock_github_api
+            self.args, self.mock_command_runner, self.mock_github_api, "test_user"
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
@@ -358,15 +359,13 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator._cleanup = MagicMock()
 
     def test_get_repo_slug_ssh_url(self):
-        """Test that _get_repo_slug parses SSH remote URLs correctly."""
-        # Un-mock the method for this test
-        del self.automator._get_repo_slug
-        self.automator._run_cmd.return_value = subprocess.CompletedProcess(
-            [], 0, "git@github.com:test_owner/test_repo.git"
+        """Test that get_repo_slug parses SSH remote URLs correctly."""
+        self.mock_command_runner.run_command.return_value = (
+            subprocess.CompletedProcess(
+                [], 0, "git@github.com:test_owner/test_repo.git"
+            )
         )
-
-        repo_slug = self.automator._get_repo_slug()
-
+        repo_slug = get_repo_slug(self.mock_command_runner, "origin")
         self.assertEqual(repo_slug, "test_owner/test_repo")
 
     def test_get_current_branch_empty(self):
@@ -481,14 +480,12 @@ class TestLLVMPRAutomator(unittest.TestCase):
             self.automator._check_work_tree_is_clean()
 
     def test_get_repo_slug_error(self):
-        """Test that _get_repo_slug exits if the remote URL is invalid."""
-        # Un-mock the method for this test
-        del self.automator._get_repo_slug
-        self.automator._run_cmd.return_value = subprocess.CompletedProcess(
-            [], 0, "invalid_url"
+        """Test that get_repo_slug exits if the remote URL is invalid."""
+        self.mock_command_runner.run_command.return_value = (
+            subprocess.CompletedProcess([], 0, "invalid_url")
         )
         with self.assertRaises(SystemExit):
-            self.automator._get_repo_slug()
+            get_repo_slug(self.mock_command_runner, "origin")
 
     def test_sanitize_for_branch_name_fallback(self):
         """Test the fallback case for _sanitize_for_branch_name."""
@@ -755,7 +752,7 @@ class TestNewFeatures(unittest.TestCase):
             dry_run=False,
         )
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_command_runner, self.github_api
+            self.args, self.mock_command_runner, self.github_api, "test_user"
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
