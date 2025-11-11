@@ -18,13 +18,11 @@ class CommandRunner:
     def __init__(
         self, dry_run: bool = False, verbose: bool = False, quiet: bool = False
     ):
-        """Initializes the CommandRunner with dry_run, verbose, and quiet settings."""
         self.dry_run = dry_run
         self.verbose = verbose
         self.quiet = quiet
 
     def print(self, message: str, file=sys.stdout):
-        """Prints a message to the specified file, respecting quiet mode."""
         if self.quiet and file == sys.stdout:
             return
         print(message, file=file)
@@ -38,7 +36,6 @@ class CommandRunner:
         stdin_input: Optional[str] = None,
         read_only: bool = False,
     ) -> subprocess.CompletedProcess:
-        """Runs a shell command, handling dry runs, verbosity, and errors."""
         if self.dry_run and not read_only:
             self.print(f"[Dry Run] Would run: {' '.join(command)}")
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -108,7 +105,6 @@ class GitHubAPI:
             raise
 
     def get_user_login(self) -> str:
-        """Gets the current user's login name."""
         response = self._request("get", "/user")
         return response.json()["login"]
 
@@ -120,7 +116,6 @@ class GitHubAPI:
         body: str,
         draft: bool,
     ) -> Optional[str]:
-        """Creates a GitHub Pull Request."""
         self.runner.print(f"Creating pull request for '{head_branch}'...")
         data = {
             "title": title,
@@ -136,12 +131,10 @@ class GitHubAPI:
         return pr_url
 
     def get_repo_settings(self) -> dict:
-        """Gets repository settings."""
         response = self._request("get", f"/repos/{self.repo_slug}")
         return response.json()
 
     def merge_pr(self, pr_url: str):
-        """Merges a PR, retrying if it's not yet mergeable."""
         if not pr_url:
             return
 
@@ -212,7 +205,6 @@ class GitHubAPI:
         sys.exit(1)
 
     def enable_auto_merge(self, pr_url: str):
-        """Enables auto-merge for a pull request."""
         if not pr_url:
             return
 
@@ -242,7 +234,6 @@ class GitHubAPI:
         self.runner.print("Auto-merge enabled.")
 
     def delete_branch(self, branch_name: str, default_branch: Optional[str] = None):
-        """Deletes a remote branch."""
         if default_branch and branch_name == default_branch:
             self.runner.print(
                 f"Error: Refusing to delete the default branch '{branch_name}'.",
@@ -291,11 +282,9 @@ class LLVMPRAutomator:
         self.repo_settings: dict = {}
 
     def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs):
-        """Wrapper for run_command that passes the dry_run flag."""
         return self.runner.run_command(command, read_only=read_only, **kwargs)
 
     def _get_repo_slug(self) -> str:
-        """Gets the GitHub repository slug from the remote URL."""
         result = self._run_cmd(
             ["git", "remote", "get-url", self.args.remote],
             capture_output=True,
@@ -313,7 +302,6 @@ class LLVMPRAutomator:
         return match.group(1).replace(".git", "")
 
     def _get_current_branch(self) -> str:
-        """Gets the current git branch."""
         result = self._run_cmd(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
@@ -323,7 +311,6 @@ class LLVMPRAutomator:
         return result.stdout.strip()
 
     def _check_work_tree_is_clean(self):
-        """Exits if the git work tree has uncommitted or unstaged changes."""
         result = self._run_cmd(
             ["git", "status", "--porcelain"],
             capture_output=True,
@@ -338,7 +325,6 @@ class LLVMPRAutomator:
             sys.exit(1)
 
     def _rebase_current_branch(self):
-        """Rebases the current branch on top of the upstream base."""
         self._check_work_tree_is_clean()
 
         target = f"{self.args.upstream_remote}/{self.args.base}"
@@ -375,7 +361,6 @@ class LLVMPRAutomator:
             sys.exit(1)
 
     def _get_commit_stack(self) -> List[str]:
-        """Gets the stack of commits between the current branch's HEAD and its merge base with upstream."""
         target = f"{self.args.upstream_remote}/{self.args.base}"
         merge_base_result = self._run_cmd(
             ["git", "merge-base", "HEAD", target],
@@ -401,7 +386,6 @@ class LLVMPRAutomator:
         return [c for c in commits if c]
 
     def _get_commit_details(self, commit_hash: str) -> tuple[str, str]:
-        """Gets the title and body of a commit."""
         result = self._run_cmd(
             ["git", "show", "-s", "--format=%s%n%n%b", commit_hash],
             capture_output=True,
@@ -414,7 +398,6 @@ class LLVMPRAutomator:
         return title, body
 
     def _sanitize_for_branch_name(self, text: str) -> str:
-        """Sanitizes a string to be used as a git branch name."""
         sanitized = re.sub(r"[^\w\s-]", "", text).strip().lower()
         sanitized = re.sub(r"[-\s]+", "-", sanitized)
         # Use "auto-pr" as a fallback.
@@ -423,7 +406,6 @@ class LLVMPRAutomator:
     def _create_and_push_branch_for_commit(
         self, commit_hash: str, base_branch_name: str, index: int
     ) -> str:
-        """Creates and pushes a temporary branch pointing to a specific commit."""
         branch_name = f"{self.args.prefix}{base_branch_name}-{index + 1}"
         commit_title, _ = self._get_commit_details(commit_hash)
         self.runner.print(f"Processing commit {commit_hash[:7]}: {commit_title}")
@@ -436,7 +418,6 @@ class LLVMPRAutomator:
         return branch_name
 
     def run(self):
-        """Main entry point for the automator, orchestrates the PR creation and merging process."""
         self.repo_slug = self._get_repo_slug()
         self.repo_settings = self.github_api.get_repo_settings()
         self.original_branch = self._get_current_branch()
@@ -516,7 +497,6 @@ class LLVMPRAutomator:
             self._cleanup()
 
     def _cleanup(self):
-        """Cleans up by returning to the original branch and deleting all temporary branches."""
         self.runner.print(f"Returning to original branch: {self.original_branch}")
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
@@ -530,7 +510,6 @@ class LLVMPRAutomator:
 
 
 def check_prerequisites(runner: CommandRunner):
-    """Checks if git is installed and if inside a git repository."""
     runner.print("Checking prerequisites...")
     runner.run_command(["git", "--version"], capture_output=True, read_only=True)
     if not os.getenv("GITHUB_TOKEN"):
@@ -555,7 +534,6 @@ def check_prerequisites(runner: CommandRunner):
 
 
 def main():
-    """main entry point"""
     parser = argparse.ArgumentParser(
         description="Create and land a stack of Pull Requests."
     )
