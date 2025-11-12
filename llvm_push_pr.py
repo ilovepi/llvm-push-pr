@@ -87,7 +87,7 @@ class GitHubAPI:
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "llvm-push-pr",
         }
-        self.opener = urllib.request.build_opener(urllib.request.HTTPHandler(debuglevel=1), urllib.request.HTTPSHandler(debuglevel=1))
+        self.opener = urllib.request.build_opener(urllib.request.HTTPHandler(), urllib.request.HTTPSHandler())
 
     def _request(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
