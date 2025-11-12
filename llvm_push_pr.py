@@ -523,8 +523,8 @@ def main():
     BASE_BRANCH = "main"
 
     command_runner = CommandRunner()
-    token = os.getenv("GITHUB_TOKEN")
-    default_prefix = "dev/"
+    token = os.getenv("LLVM_GITHUB_TOKEN")
+    default_prefix = "users/"
     user_login = ""
     if token:
         # Create a temporary API client to get the user login.
