@@ -2,7 +2,6 @@
 """A script to automate the creation and landing of a stack of Pull Requests."""
 
 import argparse
-import http.client
 import json
 import os
 import re
@@ -12,11 +11,13 @@ import time
 import urllib.error
 import urllib.request
 from typing import List, Optional
+from http.client import HTTPResponse
 
 
 # TODO(user): When submitting upstream, change this to "llvm/llvm-project".
 REPO_SLUG = "ilovepi/llvm-push-pr"
 
+LLVM_GITHUB_TOKEN_VAR= "LLVM_GITHUB_TOKEN"
 
 class CommandRunner:
     """Handles command execution and output.
@@ -87,7 +88,7 @@ class GitHubAPI:
 
     def _request(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
-    ) -> http.client.HTTPResponse:
+    ) -> HTTPResponse:
         url = f"{self.BASE_URL}{endpoint}"
         if self.runner.verbose:
             self.runner.print(f"API Request: {method.upper()} {url}")
@@ -548,9 +549,9 @@ class LLVMPRAutomator:
 def check_prerequisites(runner: CommandRunner):
     runner.print("Checking prerequisites...")
     runner.run_command(["git", "--version"], capture_output=True, read_only=True)
-    if not os.getenv("GITHUB_TOKEN"):
+    if not os.getenv(LLVM_GITHUB_TOKEN_VAR):
         runner.print(
-            "Error: GITHUB_TOKEN environment variable not set.", file=sys.stderr
+            f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.", file=sys.stderr
         )
         sys.exit(1)
 
@@ -578,7 +579,7 @@ def main():
     BASE_BRANCH = "main"
 
     command_runner = CommandRunner()
-    token = os.getenv("LLVM_GITHUB_TOKEN")
+    token = os.getenv(LLVM_GITHUB_TOKEN_VAR)
     default_prefix = "users/"
     user_login = ""
     if token:
