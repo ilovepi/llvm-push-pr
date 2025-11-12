@@ -330,7 +330,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_command_runner, self.mock_github_api, "test_user"
+            self.args, self.mock_command_runner, self.mock_github_api, "test_user", "test_token"
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
@@ -412,7 +412,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.assertEqual(branch_name, "test/base-branch-1")
         self.automator._run_cmd.assert_has_calls(
             [
-                call(["git", "push", "origin", "commit1:refs/heads/test/base-branch-1"]),
+                call(["git", "push", "https://test_token@github.com/ilovepi/llvm-push-pr.git", "commit1:refs/heads/test/base-branch-1"]),
             ]
         )
 
@@ -422,6 +422,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._rebase_current_branch
         self.automator._run_cmd.side_effect = [
             subprocess.CompletedProcess([], 0, ""),  # git status
+            subprocess.CompletedProcess([], 0, "git@github.com:upstream/repo.git"), # git remote get-url
             subprocess.CompletedProcess([], 0, ""),  # git fetch
             subprocess.CalledProcessError(1, "cmd"),  # git rebase
             subprocess.CompletedProcess(
@@ -430,6 +431,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             self.automator._rebase_current_branch()
+        self.automator._run_cmd.assert_has_calls([
+            call(["git", "fetch", "https://test_token@github.com/upstream/repo.git", "main"])
+        ], any_order=True)
 
     def test_rebase_current_branch_conflict(self):
         """Test that _rebase_current_branch exits on rebase conflict."""
@@ -437,6 +441,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._rebase_current_branch
         self.automator._run_cmd.side_effect = [
             subprocess.CompletedProcess([], 0, ""),  # git status
+            subprocess.CompletedProcess([], 0, "git@github.com:upstream/repo.git"), # git remote get-url
             subprocess.CompletedProcess([], 0, ""),  # git fetch
             subprocess.CalledProcessError(1, "cmd"),  # git rebase
             subprocess.CompletedProcess([], 0, ""),  # git status (in except block)
@@ -444,6 +449,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             self.automator._rebase_current_branch()
+        self.automator._run_cmd.assert_has_calls([
+            call(["git", "fetch", "https://test_token@github.com/upstream/repo.git", "main"])
+        ], any_order=True)
 
     def test_check_work_tree_is_clean_dirty(self):
         """Test that _check_work_tree_is_clean exits if the work tree is dirty."""
@@ -650,7 +658,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
                     [
                         "git",
                         "push",
-                        "origin",
+                        "https://test_token@github.com/ilovepi/llvm-push-pr.git",
                         "--delete",
                         "branch1",
                         "branch2",
@@ -717,7 +725,7 @@ class TestNewFeatures(unittest.TestCase):
             dry_run=False,
         )
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_command_runner, self.github_api, "test_user"
+            self.args, self.mock_command_runner, self.github_api, "test_user", "test_token"
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
