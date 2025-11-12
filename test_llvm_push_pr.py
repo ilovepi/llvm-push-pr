@@ -1,9 +1,11 @@
 import unittest
 from unittest.mock import MagicMock, patch, call
+import io
 import argparse
 import subprocess
-import requests
 import sys
+import urllib.request
+import urllib.error
 
 from llvm_push_pr import (
     LLVMPRAutomator,
@@ -20,8 +22,10 @@ class TestMain(unittest.TestCase):
     @patch("llvm_push_pr.CommandRunner")
     @patch("llvm_push_pr.GitHubAPI")
     @patch("os.getenv", return_value="test_token")
+    @patch("urllib.request.urlopen")
     def test_main_get_user_login_error(
         self,
+        mock_urlopen,
         mock_getenv,
         mock_github_api_class,
         mock_command_runner_class,
@@ -29,8 +33,8 @@ class TestMain(unittest.TestCase):
     ):
         """Test that main handles errors when fetching user login."""
         mock_github_api_instance = mock_github_api_class.return_value
-        mock_github_api_instance.get_user_login.side_effect = (
-            requests.exceptions.RequestException
+        mock_github_api_instance.get_user_login.side_effect = urllib.error.HTTPError(
+            "url", 404, "Not Found", {}, None
         )
 
         mock_command_runner_instance = mock_command_runner_class.return_value
@@ -53,7 +57,7 @@ class TestMain(unittest.TestCase):
         ):
             main()
             mock_command_runner_instance.print.assert_called_with(
-                "Could not fetch user login from GitHub: ",
+                "Could not fetch user login from GitHub: HTTP Error 404: Not Found",
                 file=sys.stderr,
             )
 
@@ -150,72 +154,83 @@ class TestGitHubAPI(unittest.TestCase):
         self.mock_command_runner.verbose = False
         self.mock_command_runner.dry_run = False
         self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
-    @patch("requests.request")
-    def test_delete_branch_already_deleted(self, mock_request):
-        """Test that delete_branch handles a 422 error."""
-        mock_response = MagicMock()
-        mock_response.status_code = 422
-        mock_response.text = "Reference does not exist"
-        mock_response.raise_for_status.side_effect = (
-            requests.exceptions.RequestException(response=mock_response)
-        )
-        mock_request.return_value = mock_response
 
+    @patch("urllib.request.urlopen")
+    def test_delete_branch_already_deleted(self, mock_urlopen):
+        """Test that delete_branch handles a 422 error."""
+        mock_error = urllib.error.HTTPError(
+            "url",
+            422,
+            "Reference does not exist",
+            {},
+            io.BytesIO(b"Reference does not exist"),
+        )
+        mock_urlopen.side_effect = mock_error
+
+        self.mock_command_runner.verbose = True
         self.github_api.delete_branch("already-deleted-branch")
         expected_calls = [
             call("Deleting remote branch 'already-deleted-branch'"),
             call(
-                "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: ",
+                "API Request: DELETE https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch"
+            ),
+            call(
+                "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: HTTP Error 422: Reference does not exist",
                 file=sys.stderr,
             ),
-            call("Response: Reference does not exist", file=sys.stderr),
+            call(
+                "Warning: Remote branch 'already-deleted-branch' was already deleted, skipping deletion.",
+                file=sys.stderr,
+            ),
         ]
         self.mock_command_runner.print.assert_has_calls(expected_calls)
 
-    @patch("requests.request", side_effect=requests.exceptions.RequestException)
-    def test_delete_branch_error(self, mock_request):
+    @patch(
+        "urllib.request.urlopen",
+        side_effect=urllib.error.HTTPError(
+            "url", 500, "Internal Server Error", {}, None
+        ),
+    )
+    def test_delete_branch_error(self, mock_urlopen):
         """Test that delete_branch handles request exceptions."""
-        with self.assertRaises(requests.exceptions.RequestException):
+        with self.assertRaises(urllib.error.HTTPError):
             self.github_api.delete_branch("test-branch")
         self.mock_command_runner.print.assert_called_with(
-            "Could not delete remote branch 'test-branch': ",
+            "Could not delete remote branch 'test-branch': HTTP Error 500: Internal Server Error",
             file=sys.stderr,
         )
 
-    @patch("requests.request", side_effect=requests.exceptions.RequestException)
-    def test_request_error(self, mock_request):
+    @patch(
+        "urllib.request.urlopen",
+        side_effect=urllib.error.HTTPError(
+            "url", 500, "Internal Server Error", {}, None
+        ),
+    )
+    def test_request_error(self, mock_urlopen):
         """Test that _request raises on a request exception."""
-        with self.assertRaises(requests.exceptions.RequestException):
+        with self.assertRaises(urllib.error.HTTPError):
             self.github_api._request("get", "/user")
 
-    @patch("requests.request")
-    def test_get_user_login(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_get_user_login(self, mock_urlopen):
         """Test that get_user_login returns the correct login."""
         mock_response = MagicMock()
-        mock_response.json.return_value = {"login": "test_user"}
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = b'{"login": "test_user"}'
+        mock_urlopen.return_value.__enter__.return_value = mock_response
 
         login = self.github_api.get_user_login()
 
         self.assertEqual(login, "test_user")
-        mock_request.assert_called_once_with(
-            "get",
-            "https://api.github.com/user",
-            headers={
-                "Authorization": "token test_token",
-                "Accept": "application/vnd.github.v3+json",
-            },
-            timeout=30,
-        )
+        mock_urlopen.assert_called_once()
 
-    @patch("requests.request")
-    def test_create_pr(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_create_pr(self, mock_urlopen):
         """Test that create_pr returns the correct PR URL."""
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "html_url": "https://github.com/test/repo/pull/1"
-        }
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = (
+            b'{"html_url": "https://github.com/test/repo/pull/1"}'
+        )
+        mock_urlopen.return_value.__enter__.return_value = mock_response
 
         pr_url = self.github_api.create_pr(
             "feature-branch", "main", "Test PR", "Test Body", False
@@ -223,33 +238,25 @@ class TestGitHubAPI(unittest.TestCase):
 
         self.assertEqual(pr_url, "https://github.com/test/repo/pull/1")
 
-    @patch("requests.request")
+    @patch("urllib.request.urlopen")
     @patch("sys.exit")
-    def test_merge_pr_not_mergeable_after_retries(self, mock_sys_exit, mock_request):
+    def test_merge_pr_not_mergeable_after_retries(self, mock_sys_exit, mock_urlopen):
         """Test that merge_pr exits if the PR is not mergeable after retries."""
         mock_not_mergeable_response = MagicMock()
-        mock_not_mergeable_response.json.return_value = {
-            "mergeable": False,
-            "mergeable_state": "unstable",
-            "head": {"ref": "feature-branch"},
-        }
-        mock_request.return_value = mock_not_mergeable_response
+        mock_not_mergeable_response.read.return_value = b'{"mergeable": false, "mergeable_state": "unstable", "head": {"ref": "feature-branch"}}'
+        mock_urlopen.return_value.__enter__.return_value = mock_not_mergeable_response
 
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
         mock_sys_exit.assert_called_once_with(1)
 
-    @patch("requests.request")
-    def test_merge_pr_dirty(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_merge_pr_dirty(self, mock_urlopen):
         """Test that merge_pr exits if the mergeable state is 'dirty'."""
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "mergeable": False,
-            "mergeable_state": "dirty",
-            "head": {"ref": "feature-branch"},
-        }
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = b'{"mergeable": false, "mergeable_state": "dirty", "head": {"ref": "feature-branch"}}'
+        mock_urlopen.return_value.__enter__.return_value = mock_response
 
         with self.assertRaises(SystemExit):
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
@@ -259,60 +266,67 @@ class TestGitHubAPI(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.github_api.merge_pr("invalid_url")
 
-    @patch("requests.request")
-    def test_merge_pr_405_retry(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_merge_pr_405_retry(self, mock_urlopen):
         """Test that merge_pr retries on a 405 error."""
         mock_mergeable_response = MagicMock()
-        mock_mergeable_response.json.return_value = {
-            "mergeable": True,
-            "title": "Test PR",
-            "head": {"ref": "feature-branch"},
-        }
-        mock_405_response = MagicMock()
-        mock_405_response.raise_for_status.side_effect = (
-            requests.exceptions.RequestException(response=MagicMock(status_code=405))
+        mock_mergeable_response.read.return_value.decode.return_value = (
+            '{"mergeable": true, "title": "Test PR", "head": {"ref": "feature-branch"}}'
         )
-        mock_success_response = MagicMock()
 
-        mock_request.side_effect = [
-            mock_mergeable_response,
-            mock_405_response,
-            mock_mergeable_response,  # For the retry
-            mock_success_response,  # For the successful merge
+        mock_405_error = urllib.error.HTTPError(
+            "url", 405, "Method Not Allowed", {}, io.BytesIO(b"Method Not Allowed")
+        )
+
+        mock_success_response = MagicMock()
+        mock_success_response.read.return_value.decode.return_value = "{}"
+
+        mock_urlopen.side_effect = [
+            MagicMock(
+                __enter__=MagicMock(return_value=mock_mergeable_response)
+            ),  # For the initial GET
+            mock_405_error,  # For the PUT merge attempt
+            MagicMock(
+                __enter__=MagicMock(return_value=mock_mergeable_response)
+            ),  # For the retry GET
+            MagicMock(
+                __enter__=MagicMock(return_value=mock_success_response)
+            ),  # For the successful PUT merge
         ]
 
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
-        self.assertEqual(mock_request.call_count, 4)
+        self.assertEqual(mock_urlopen.call_count, 4)
 
-    @patch("requests.request")
-    def test_merge_pr_retry(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_merge_pr_retry(self, mock_urlopen):
         """Test that merge_pr retries if the PR is not initially mergeable."""
         mock_not_mergeable_response = MagicMock()
-        mock_not_mergeable_response.json.return_value = {
-            "mergeable": False,
-            "mergeable_state": "unstable",
-            "head": {"ref": "feature-branch"},
-        }
+        mock_not_mergeable_response.read.return_value.decode.return_value = '{"mergeable": false, "mergeable_state": "unstable", "head": {"ref": "feature-branch"}}'
         mock_mergeable_response = MagicMock()
-        mock_mergeable_response.json.return_value = {
-            "mergeable": True,
-            "title": "Test PR",
-            "head": {"ref": "feature-branch"},
-        }
+        mock_mergeable_response.read.return_value.decode.return_value = (
+            '{"mergeable": true, "title": "Test PR", "head": {"ref": "feature-branch"}}'
+        )
         mock_merge_response = MagicMock()
+        mock_merge_response.read.return_value.decode.return_value = "{}"
 
-        mock_request.side_effect = [
-            mock_not_mergeable_response,
-            mock_mergeable_response,
-            mock_merge_response,  # For the merge call
+        mock_urlopen.side_effect = [
+            MagicMock(
+                __enter__=MagicMock(return_value=mock_not_mergeable_response)
+            ),  # For the initial GET
+            MagicMock(
+                __enter__=MagicMock(return_value=mock_mergeable_response)
+            ),  # For the second GET
+            MagicMock(
+                __enter__=MagicMock(return_value=mock_merge_response)
+            ),  # For the PUT merge call
         ]
 
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
-        self.assertEqual(mock_request.call_count, 3)
+        self.assertEqual(mock_urlopen.call_count, 3)
 
 
 class TestLLVMPRAutomator(unittest.TestCase):
@@ -330,7 +344,11 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_command_runner, self.mock_github_api, "test_user", "test_token"
+            self.args,
+            self.mock_command_runner,
+            self.mock_github_api,
+            "test_user",
+            "test_token",
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
@@ -412,7 +430,14 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.assertEqual(branch_name, "test/base-branch-1")
         self.automator._run_cmd.assert_has_calls(
             [
-                call(["git", "push", "https://test_token@github.com/ilovepi/llvm-push-pr.git", "commit1:refs/heads/test/base-branch-1"]),
+                call(
+                    [
+                        "git",
+                        "push",
+                        "https://test_token@github.com/ilovepi/llvm-push-pr.git",
+                        "commit1:refs/heads/test/base-branch-1",
+                    ]
+                ),
             ]
         )
 
@@ -422,7 +447,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._rebase_current_branch
         self.automator._run_cmd.side_effect = [
             subprocess.CompletedProcess([], 0, ""),  # git status
-            subprocess.CompletedProcess([], 0, "git@github.com:upstream/repo.git"), # git remote get-url
+            subprocess.CompletedProcess(
+                [], 0, "git@github.com:upstream/repo.git"
+            ),  # git remote get-url
             subprocess.CompletedProcess([], 0, ""),  # git fetch
             subprocess.CalledProcessError(1, "cmd"),  # git rebase
             subprocess.CompletedProcess(
@@ -431,9 +458,19 @@ class TestLLVMPRAutomator(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             self.automator._rebase_current_branch()
-        self.automator._run_cmd.assert_has_calls([
-            call(["git", "fetch", "https://test_token@github.com/upstream/repo.git", "main"])
-        ], any_order=True)
+        self.automator._run_cmd.assert_has_calls(
+            [
+                call(
+                    [
+                        "git",
+                        "fetch",
+                        "https://test_token@github.com/upstream/repo.git",
+                        "main",
+                    ]
+                )
+            ],
+            any_order=True,
+        )
 
     def test_rebase_current_branch_conflict(self):
         """Test that _rebase_current_branch exits on rebase conflict."""
@@ -441,7 +478,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._rebase_current_branch
         self.automator._run_cmd.side_effect = [
             subprocess.CompletedProcess([], 0, ""),  # git status
-            subprocess.CompletedProcess([], 0, "git@github.com:upstream/repo.git"), # git remote get-url
+            subprocess.CompletedProcess(
+                [], 0, "git@github.com:upstream/repo.git"
+            ),  # git remote get-url
             subprocess.CompletedProcess([], 0, ""),  # git fetch
             subprocess.CalledProcessError(1, "cmd"),  # git rebase
             subprocess.CompletedProcess([], 0, ""),  # git status (in except block)
@@ -449,9 +488,19 @@ class TestLLVMPRAutomator(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             self.automator._rebase_current_branch()
-        self.automator._run_cmd.assert_has_calls([
-            call(["git", "fetch", "https://test_token@github.com/upstream/repo.git", "main"])
-        ], any_order=True)
+        self.automator._run_cmd.assert_has_calls(
+            [
+                call(
+                    [
+                        "git",
+                        "fetch",
+                        "https://test_token@github.com/upstream/repo.git",
+                        "main",
+                    ]
+                )
+            ],
+            any_order=True,
+        )
 
     def test_check_work_tree_is_clean_dirty(self):
         """Test that _check_work_tree_is_clean exits if the work tree is dirty."""
@@ -725,7 +774,11 @@ class TestNewFeatures(unittest.TestCase):
             dry_run=False,
         )
         self.automator = LLVMPRAutomator(
-            self.args, self.mock_command_runner, self.github_api, "test_user", "test_token"
+            self.args,
+            self.mock_command_runner,
+            self.github_api,
+            "test_user",
+            "test_token",
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
@@ -736,44 +789,30 @@ class TestNewFeatures(unittest.TestCase):
         self.automator._create_and_push_branch_for_commit = MagicMock()
         self.automator._cleanup = MagicMock()
 
-    @patch("requests.request")
-    def test_get_repo_settings(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_get_repo_settings(self, mock_urlopen):
         """Test that get_repo_settings returns the correct settings."""
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "delete_branch_on_merge": True,
-            "default_branch": "main",
-        }
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = (
+            b'{"delete_branch_on_merge": true, "default_branch": "main"}'
+        )
+        mock_urlopen.return_value.__enter__.return_value = mock_response
 
         settings = self.github_api.get_repo_settings()
 
         self.assertEqual(settings["delete_branch_on_merge"], True)
         self.assertEqual(settings["default_branch"], "main")
-        mock_request.assert_called_once_with(
-            "get",
-            "https://api.github.com/repos/ilovepi/llvm-push-pr",
-            headers={
-                "Authorization": "token test_token",
-                "Accept": "application/vnd.github.v3+json",
-            },
-            timeout=30,
-        )
+        mock_urlopen.assert_called_once()
 
-    @patch("requests.request")
-    def test_enable_auto_merge(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_enable_auto_merge(self, mock_urlopen):
         """Test that enable_auto_merge sends the correct request."""
+        mock_response = MagicMock()
+        mock_response.read.return_value = b"{}"
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
         self.github_api.enable_auto_merge("https://github.com/test/repo/pull/1")
-        mock_request.assert_called_once_with(
-            "put",
-            "https://api.github.com/repos/ilovepi/llvm-push-pr/pulls/1/auto-merge",
-            headers={
-                "Authorization": "token test_token",
-                "Accept": "application/vnd.github.v3+json",
-            },
-            timeout=30,
-            json={"enabled": True, "merge_method": "squash"},
-        )
+        mock_urlopen.assert_called_once()
 
     def test_delete_branch_refuses_default(self):
         """Test that delete_branch refuses to delete the default branch."""

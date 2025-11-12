@@ -7,16 +7,19 @@ import re
 import subprocess
 import sys
 import time
+import json
+import urllib.request
+import urllib.error
 from typing import List, Optional
-
-import requests
 
 
 # TODO(user): When submitting upstream, change this to "llvm/llvm-project".
 REPO_SLUG = "ilovepi/llvm-push-pr"
 
+
 class CommandRunner:
-    """Handles all output and command execution, with options for dry runs and verbosity."""
+    """Handles command execution and output.
+       Supports dry runs and verbosity level."""
 
     def __init__(
         self, dry_run: bool = False, verbose: bool = False, quiet: bool = False
@@ -61,9 +64,7 @@ class CommandRunner:
             )
             sys.exit(1)
         except subprocess.CalledProcessError as e:
-            self.print(
-                f"Error running command: {' '.join(command)}", file=sys.stderr
-            )
+            self.print(f"Error running command: {' '.join(command)}", file=sys.stderr)
             if e.stdout:
                 self.print(f"--- stdout ---\n{e.stdout}", file=sys.stderr)
             if e.stderr:
@@ -83,30 +84,34 @@ class GitHubAPI:
             "Accept": "application/vnd.github.v3+json",
         }
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
+    def _request(self, method: str, endpoint: str, **kwargs) -> str:
         url = f"{self.BASE_URL}{endpoint}"
         if self.runner.verbose:
             self.runner.print(f"API Request: {method.upper()} {url}")
             if "json" in kwargs:
                 self.runner.print(f"Payload: {kwargs['json']}")
 
+        data = None
+        if "json" in kwargs:
+            data = json.dumps(kwargs["json"]).encode("utf-8")
+            self.headers["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(
+            url, data=data, headers=self.headers, method=method
+        )
+
         try:
-            response = requests.request(
-                method, url, headers=self.headers, timeout=30, **kwargs
-            )
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return response.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
             )
-            if e.response is not None:
-                self.runner.print(f"Response: {e.response.text}", file=sys.stderr)
             raise
 
     def get_user_login(self) -> str:
-        response = self._request("get", "/user")
-        return response.json()["login"]
+        response_text = self._request("get", "/user")
+        return json.loads(response_text)["login"]
 
     def create_pr(
         self,
@@ -124,15 +129,15 @@ class GitHubAPI:
             "base": base_branch,
             "draft": draft,
         }
-        response = self._request("post", f"/repos/{REPO_SLUG}/pulls", json=data)
-        pr_url = response.json().get("html_url")
+        response_text = self._request("post", f"/repos/{REPO_SLUG}/pulls", json=data)
+        pr_url = json.loads(response_text).get("html_url")
         if not self.runner.dry_run:
             self.runner.print(f"Pull request created: {pr_url}")
         return pr_url
 
     def get_repo_settings(self) -> dict:
-        response = self._request("get", f"/repos/{REPO_SLUG}")
-        return response.json()
+        response_text = self._request("get", f"/repos/{REPO_SLUG}")
+        return json.loads(response_text)
 
     def merge_pr(self, pr_url: str):
         if not pr_url:
@@ -159,10 +164,10 @@ class GitHubAPI:
                 f"Attempting to merge {pr_url} (attempt {i+1}/{max_retries})..."
             )
 
-            pr_data_response = self._request(
+            pr_data_response_text = self._request(
                 "get", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
             )
-            pr_data = pr_data_response.json()
+            pr_data = json.loads(pr_data_response_text)
             head_branch = pr_data["head"]["ref"]
 
             if pr_data["mergeable"]:
@@ -178,8 +183,8 @@ class GitHubAPI:
                     self.runner.print("Successfully merged.")
                     time.sleep(2)
                     return head_branch
-                except requests.exceptions.RequestException as e:
-                    if e.response and e.response.status_code == 405:
+                except urllib.error.HTTPError as e:
+                    if e.code == 405:
                         self.runner.print(
                             "PR not mergeable yet. Retrying in "
                             f"{retry_delay} seconds..."
@@ -241,15 +246,9 @@ class GitHubAPI:
             return
         self.runner.print(f"Deleting remote branch '{branch_name}'")
         try:
-            self._request(
-                "delete", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
-            )
-        except requests.exceptions.RequestException as e:
-            if (
-                e.response is not None
-                and e.response.status_code == 422
-                and "Reference does not exist" in e.response.text
-            ):
+            self._request("delete", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}")
+        except urllib.error.HTTPError as e:
+            if e.code == 422 and "Reference does not exist" in e.read().decode("utf-8"):
                 if self.runner.verbose:
                     self.runner.print(
                         f"Warning: Remote branch '{branch_name}' was already deleted, skipping deletion.",
@@ -425,7 +424,12 @@ class LLVMPRAutomator:
         self.runner.print(f"Pushing commit to temporary branch '{branch_name}'")
 
         push_url = f"https://{self.token}@github.com/{REPO_SLUG}.git"
-        push_command = ["git", "push", push_url, f"{commit_hash}:refs/heads/{branch_name}"]
+        push_command = [
+            "git",
+            "push",
+            push_url,
+            f"{commit_hash}:refs/heads/{branch_name}",
+        ]
         self._run_cmd(push_command)
         self.created_branches.append(branch_name)
         return branch_name
@@ -564,7 +568,7 @@ def main():
         try:
             user_login = temp_api.get_user_login()
             default_prefix = f"{user_login}/"
-        except requests.exceptions.RequestException as e:
+        except urllib.error.HTTPError as e:
             command_runner.print(
                 f"Could not fetch user login from GitHub: {e}", file=sys.stderr
             )
