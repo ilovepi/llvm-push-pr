@@ -273,11 +273,13 @@ class LLVMPRAutomator:
         runner: CommandRunner,
         github_api: "GitHubAPI",
         user_login: str,
+        token: str,
     ):
         self.args = args
         self.runner = runner
         self.github_api = github_api
         self.user_login = user_login
+        self.token = token
         self.original_branch: str = ""
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
@@ -315,7 +317,35 @@ class LLVMPRAutomator:
         self.runner.print(
             f"Fetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
         )
-        self._run_cmd(["git", "fetch", self.args.upstream_remote, self.args.base])
+        # Get the actual URL for the upstream remote.
+        upstream_remote_url_result = self._run_cmd(
+            ["git", "remote", "get-url", self.args.upstream_remote],
+            capture_output=True,
+            text=True,
+            read_only=True,
+        )
+        upstream_remote_url = upstream_remote_url_result.stdout.strip()
+
+        # Transform the URL to an authenticated HTTPS format.
+        authenticated_upstream_url: str
+        if upstream_remote_url.startswith("git@github.com:"):
+            # Convert SSH to HTTPS and inject token
+            authenticated_upstream_url = upstream_remote_url.replace(
+                "git@github.com:", f"https://{self.token}@github.com/"
+            )
+        elif upstream_remote_url.startswith("https://github.com/"):
+            # Inject token into existing HTTPS URL
+            authenticated_upstream_url = upstream_remote_url.replace(
+                "https://", f"https://{self.token}@"
+            )
+        else:
+            self.runner.print(
+                f"Error: Unsupported upstream remote URL format: {upstream_remote_url}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        self._run_cmd(["git", "fetch", authenticated_upstream_url, self.args.base])
 
         try:
             self._run_cmd(["git", "rebase", target])
@@ -395,8 +425,8 @@ class LLVMPRAutomator:
         self.runner.print(f"Processing commit {commit_hash[:7]}: {commit_title}")
         self.runner.print(f"Pushing commit to temporary branch '{branch_name}'")
 
-        # Directly push the commit SHA to a new remote branch.
-        push_command = ["git", "push", self.args.remote, f"{commit_hash}:refs/heads/{branch_name}"]
+        push_url = f"https://{self.token}@github.com/{REPO_SLUG}.git"
+        push_command = ["git", "push", push_url, f"{commit_hash}:refs/heads/{branch_name}"]
         self._run_cmd(push_command)
         self.created_branches.append(branch_name)
         return branch_name
@@ -484,8 +514,9 @@ class LLVMPRAutomator:
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
             self.runner.print("Cleaning up temporary remote branches...")
+            delete_url = f"https://{self.token}@github.com/{REPO_SLUG}.git"
             self._run_cmd(
-                ["git", "push", self.args.remote, "--delete"] + self.created_branches,
+                ["git", "push", delete_url, "--delete"] + self.created_branches,
                 check=False,
             )
 
@@ -595,7 +626,7 @@ def main():
     check_prerequisites(command_runner)
 
     github_api = GitHubAPI(command_runner, token)
-    automator = LLVMPRAutomator(args, command_runner, github_api, user_login)
+    automator = LLVMPRAutomator(args, command_runner, github_api, user_login, token)
     automator.run()
 
 
