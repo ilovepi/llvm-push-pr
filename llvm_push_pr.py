@@ -393,10 +393,10 @@ class LLVMPRAutomator:
         branch_name = f"{self.args.prefix}{base_branch_name}-{index + 1}"
         commit_title, _ = self._get_commit_details(commit_hash)
         self.runner.print(f"Processing commit {commit_hash[:7]}: {commit_title}")
-        self.runner.print(f"Creating and pushing temporary branch '{branch_name}'")
+        self.runner.print(f"Pushing commit to temporary branch '{branch_name}'")
 
-        self._run_cmd(["git", "branch", "-f", branch_name, commit_hash])
-        push_command = ["git", "push", self.args.remote, branch_name]
+        # Directly push the commit SHA to a new remote branch.
+        push_command = ["git", "push", self.args.remote, f"{commit_hash}:refs/heads/{branch_name}"]
         self._run_cmd(push_command)
         self.created_branches.append(branch_name)
         return branch_name
@@ -483,8 +483,6 @@ class LLVMPRAutomator:
         self.runner.print(f"Returning to original branch: {self.original_branch}")
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
-            self.runner.print("Cleaning up temporary local branches...")
-            self._run_cmd(["git", "branch", "-D"] + self.created_branches)
             self.runner.print("Cleaning up temporary remote branches...")
             self._run_cmd(
                 ["git", "push", self.args.remote, "--delete"] + self.created_branches,

@@ -412,8 +412,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.assertEqual(branch_name, "test/base-branch-1")
         self.automator._run_cmd.assert_has_calls(
             [
-                call(["git", "branch", "-f", "test/base-branch-1", "commit1"]),
-                call(["git", "push", "origin", "test/base-branch-1"]),
+                call(["git", "push", "origin", "commit1:refs/heads/test/base-branch-1"]),
             ]
         )
 
@@ -647,7 +646,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator._run_cmd.assert_has_calls(
             [
                 call(["git", "checkout", "feature-branch"], capture_output=True),
-                call(["git", "branch", "-D", "branch1", "branch2"]),
                 call(
                     [
                         "git",
