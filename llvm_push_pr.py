@@ -602,6 +602,7 @@ def main():
             command_runner.print(
                 f"Could not fetch user login from GitHub: {e}", file=sys.stderr
             )
+            sys.exit(1)
 
     parser.add_argument(
         "--base",
