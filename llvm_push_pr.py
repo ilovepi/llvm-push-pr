@@ -167,7 +167,6 @@ class GitHubAPI:
 
             if pr_data["mergeable"]:
                 merge_data = {
-                    "commit_title": f"{pr_data['title']} (#{pr_number})",
                     "merge_method": "squash",
                 }
                 try:
