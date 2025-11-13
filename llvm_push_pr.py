@@ -553,9 +553,6 @@ class LLVMPRAutomator:
 def check_prerequisites(runner: CommandRunner) -> None:
     runner.print("Checking prerequisites...")
     runner.run_command(["git", "--version"], capture_output=True, read_only=True)
-    if not os.getenv(LLVM_GITHUB_TOKEN_VAR):
-        sys.exit(f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.")
-
     result = runner.run_command(
         ["git", "rev-parse", "--is-inside-work-tree"],
         check=False,
@@ -563,6 +560,7 @@ def check_prerequisites(runner: CommandRunner) -> None:
         text=True,
         read_only=True,
     )
+
     if result.returncode != 0 or result.stdout.strip() != "true":
         sys.exit("Error: This script must be run inside a git repository.")
     runner.print("Prerequisites met.")
@@ -572,24 +570,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create and land a stack of Pull Requests."
     )
+
     GITHUB_REMOTE_NAME = "origin"
     UPSTREAM_REMOTE_NAME = "upstream"
     BASE_BRANCH = "main"
 
     command_runner = CommandRunner()
     token = os.getenv(LLVM_GITHUB_TOKEN_VAR)
-    default_prefix = "users/"
-    user_login = ""
-    if token:
-        # Create a temporary API client to get the user login.
-        # We need the user login for the branch prefix and for creating PRs
-        # from a fork. We don't know the repo slug yet, so pass a dummy value.
-        temp_api = GitHubAPI(command_runner, token)
-        try:
-            user_login = temp_api.get_user_login()
-            default_prefix = f"{user_login}/"
-        except urllib.error.HTTPError as e:
-            sys.exit(f"Could not fetch user login from GitHub: {e}")
+    if not token:
+        sys.exit(f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.")
+
 
     parser.add_argument(
         "--base",
@@ -607,9 +597,14 @@ def main() -> None:
         help=f"Remote for the upstream repository (default: {UPSTREAM_REMOTE_NAME})",
     )
     parser.add_argument(
+        "--login",
+        default=None,
+        help="The user login to use. If not provided this will be queried from the TOKEN",
+    )
+    parser.add_argument(
         "--prefix",
-        default=default_prefix,
-        help=f"Prefix for temporary branches (default: {default_prefix})",
+        default=None,
+        help="Prefix for temporary branches (default: users/<username>)",
     )
     parser.add_argument(
         "--draft", action="store_true", help="Create pull requests as drafts."
@@ -638,8 +633,6 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    if args.prefix and not args.prefix.endswith("/"):
-        args.prefix += "/"
 
     command_runner = CommandRunner(
         dry_run=args.dry_run, verbose=args.verbose, quiet=args.quiet
@@ -647,7 +640,22 @@ def main() -> None:
     check_prerequisites(command_runner)
 
     github_api = GitHubAPI(command_runner, token)
-    automator = LLVMPRAutomator(args, command_runner, github_api, user_login, token)
+    if not args.login:
+        # Create a temporary API client to get the user login.
+        # We need the user login for the branch prefix and for creating PRs
+        # from a fork.
+        try:
+            args.login = github_api.get_user_login()
+        except urllib.error.HTTPError as e:
+            sys.exit(f"Could not fetch user login from GitHub: {e}")
+
+    if not args.prefix:
+        args.prefix = f"users/{args.login}/"
+
+    if args.prefix and not args.prefix.endswith("/"):
+        args.prefix += "/"
+
+    automator = LLVMPRAutomator(args, command_runner, github_api, args.login, token)
     automator.run()
 
 
