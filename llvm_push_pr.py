@@ -31,7 +31,7 @@ class CommandRunner:
         self.verbose = verbose
         self.quiet = quiet
 
-    def print(self, message: str, file=sys.stdout):
+    def print(self, message: str, file=sys.stdout) -> None:
         if self.quiet and file == sys.stdout:
             return
         print(message, file=file)
@@ -124,7 +124,7 @@ class GitHubAPI:
                     self.runner.print(
                         f"Error response body: {error_body}", file=sys.stderr
                     )
-            raise
+            raise e
 
     def _request_and_parse_json(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
@@ -243,7 +243,7 @@ class GitHubAPI:
 
         sys.exit(f"Error: PR was not mergeable after {max_retries} attempts.")
 
-    def enable_auto_merge(self, pr_url: str):
+    def enable_auto_merge(self, pr_url: str) -> None:
         if not pr_url:
             return
 
@@ -268,7 +268,7 @@ class GitHubAPI:
         )
         self.runner.print("Auto-merge enabled.")
 
-    def delete_branch(self, branch_name: str, default_branch: Optional[str] = None):
+    def delete_branch(self, branch_name: str, default_branch: Optional[str] = None) -> None:
         if default_branch and branch_name == default_branch:
             self.runner.print(
                 f"Error: Refusing to delete the default branch '{branch_name}'.",
@@ -309,7 +309,7 @@ class LLVMPRAutomator:
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
 
-    def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs):
+    def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs) -> subprocess.CompletedProcess:
         return self.runner.run_command(command, read_only=read_only, **kwargs)
 
     def _get_current_branch(self) -> str:
@@ -321,7 +321,7 @@ class LLVMPRAutomator:
         )
         return result.stdout.strip()
 
-    def _check_work_tree_is_clean(self):
+    def _check_work_tree_is_clean(self) -> None:
         result = self._run_cmd(
             ["git", "status", "--porcelain"],
             capture_output=True,
@@ -333,7 +333,7 @@ class LLVMPRAutomator:
                 "Error: Your working tree is dirty. Please stash or commit your changes."
             )
 
-    def _rebase_current_branch(self):
+    def _rebase_current_branch(self) -> None:
         self._check_work_tree_is_clean()
 
         target = f"{self.args.upstream_remote}/{self.args.base}"
@@ -500,7 +500,7 @@ class LLVMPRAutomator:
             if temp_branch in self.created_branches:
                 self.created_branches.remove(temp_branch)
 
-    def run(self):
+    def run(self) -> None:
         self.repo_settings = self.github_api.get_repo_settings()
         self.original_branch = self._get_current_branch()
         self.runner.print(f"On branch: {self.original_branch}")
@@ -538,7 +538,7 @@ class LLVMPRAutomator:
         finally:
             self._cleanup()
 
-    def _cleanup(self):
+    def _cleanup(self) -> None:
         self.runner.print(f"Returning to original branch: {self.original_branch}")
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
@@ -550,7 +550,7 @@ class LLVMPRAutomator:
             )
 
 
-def check_prerequisites(runner: CommandRunner):
+def check_prerequisites(runner: CommandRunner) -> None:
     runner.print("Checking prerequisites...")
     runner.run_command(["git", "--version"], capture_output=True, read_only=True)
     if not os.getenv(LLVM_GITHUB_TOKEN_VAR):
@@ -568,7 +568,7 @@ def check_prerequisites(runner: CommandRunner):
     runner.print("Prerequisites met.")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create and land a stack of Pull Requests."
     )
