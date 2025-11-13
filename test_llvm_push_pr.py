@@ -172,7 +172,9 @@ class TestGitHubAPI(unittest.TestCase):
         self.mock_command_runner.verbose = True
         self.github_api.delete_branch("already-deleted-branch")
         expected_calls = [
-            call("API Request: DELETE https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch"),
+            call(
+                "API Request: DELETE https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch"
+            ),
             call(
                 "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: HTTP Error 422: Reference does not exist",
                 file=sys.stderr,
@@ -301,7 +303,6 @@ class TestGitHubAPI(unittest.TestCase):
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
         self.assertEqual(self.github_api.opener.open.call_count, 3)
-
 
 
 class TestLLVMPRAutomator(unittest.TestCase):
