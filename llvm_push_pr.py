@@ -330,7 +330,7 @@ class LLVMPRAutomator:
         )
         return result.stdout.strip()
 
-    def _is_work_tree_clean(self) -> None:
+    def _check_work_tree(self) -> None:
         result = self._run_cmd(
             ["git", "status", "--porcelain"],
             capture_output=True,
@@ -343,7 +343,7 @@ class LLVMPRAutomator:
             )
 
     def _rebase_current_branch(self) -> None:
-        self._is_work_tree_clean()
+        self._check_work_tree()
 
         target = f"{self.args.upstream_remote}/{self.args.base}"
         self.runner.print(
