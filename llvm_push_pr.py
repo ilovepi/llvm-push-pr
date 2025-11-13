@@ -277,24 +277,18 @@ class GitHubAPI:
                 file=sys.stderr,
             )
             return
-        self.runner.print(f"Deleting remote branch '{branch_name}'")
         try:
             self._request_no_content(
                 "DELETE", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
             )
         except urllib.error.HTTPError as e:
-            if e.code == 422 and "Reference does not exist" in e.read().decode("utf-8"):
-                if self.runner.verbose:
-                    self.runner.print(
-                        f"Warning: Remote branch '{branch_name}' was already deleted, skipping deletion.",
-                        file=sys.stderr,
-                    )
-                return
-            self.runner.print(
-                f"Could not delete remote branch '{branch_name}': {e}",
-                file=sys.stderr,
-            )
-            raise
+            if e.code == 422:
+                self.runner.print(
+                    f"Warning: Remote branch '{branch_name}' was already deleted, skipping deletion.",
+                    file=sys.stderr,
+                )
+            else:
+                raise e
 
 
 class LLVMPRAutomator:

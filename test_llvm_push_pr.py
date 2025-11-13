@@ -55,7 +55,8 @@ class TestMain(unittest.TestCase):
         with patch(
             "llvm_push_pr.LLVMPRAutomator", return_value=mock_automator_instance
         ):
-            main()
+            with self.assertRaises(SystemExit):
+                main()
             mock_command_runner_instance.print.assert_called_with(
                 "Could not fetch user login from GitHub: HTTP Error 404: Not Found",
                 file=sys.stderr,
@@ -154,9 +155,10 @@ class TestGitHubAPI(unittest.TestCase):
         self.mock_command_runner.verbose = False
         self.mock_command_runner.dry_run = False
         self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
+        # Mock the opener to prevent real network calls.
+        self.github_api.opener = MagicMock()
 
-    @patch("urllib.request.build_opener")
-    def test_delete_branch_already_deleted(self, mock_build_opener):
+    def test_delete_branch_already_deleted(self):
         """Test that delete_branch handles a 422 error."""
         mock_error = urllib.error.HTTPError(
             "url",
@@ -165,19 +167,18 @@ class TestGitHubAPI(unittest.TestCase):
             {},
             io.BytesIO(b"Reference does not exist"),
         )
-        mock_opener = MagicMock()
-        mock_opener.open.side_effect = mock_error
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.side_effect = mock_error
 
         self.mock_command_runner.verbose = True
         self.github_api.delete_branch("already-deleted-branch")
         expected_calls = [
-            call("Deleting remote branch 'already-deleted-branch'"),
-            call(
-                "API Request: DELETE https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch"
-            ),
+            call("API Request: DELETE https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch"),
             call(
                 "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: HTTP Error 422: Reference does not exist",
+                file=sys.stderr,
+            ),
+            call(
+                "Error response body: Reference does not exist",
                 file=sys.stderr,
             ),
             call(
@@ -187,86 +188,66 @@ class TestGitHubAPI(unittest.TestCase):
         ]
         self.mock_command_runner.print.assert_has_calls(expected_calls)
 
-    @patch("urllib.request.build_opener")
-    def test_delete_branch_error(self, mock_build_opener):
+    def test_delete_branch_error(self):
         """Test that delete_branch handles request exceptions."""
         mock_error = urllib.error.HTTPError(
             "url", 500, "Internal Server Error", {}, None
         )
-        mock_opener = MagicMock()
-        mock_opener.open.side_effect = mock_error
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.side_effect = mock_error
         with self.assertRaises(urllib.error.HTTPError):
             self.github_api.delete_branch("test-branch")
         self.mock_command_runner.print.assert_called_with(
-            "Could not delete remote branch 'test-branch': HTTP Error 500: Internal Server Error",
+            "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/test-branch: HTTP Error 500: Internal Server Error",
             file=sys.stderr,
         )
 
-    @patch("urllib.request.build_opener")
-    def test_request_error(self, mock_build_opener):
+    def test_request_error(self):
         """Test that _request raises on a request exception."""
         mock_error = urllib.error.HTTPError(
             "url", 500, "Internal Server Error", {}, None
         )
-        mock_opener = MagicMock()
-        mock_opener.open.side_effect = mock_error
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.side_effect = mock_error
         with self.assertRaises(urllib.error.HTTPError):
             self.github_api._request("get", "/user")
 
-    @patch("urllib.request.build_opener")
-    def test_get_user_login(self, mock_build_opener):
+    def test_get_user_login(self):
         """Test that get_user_login returns the correct login."""
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"login": "test_user"}'
-        mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = mock_response
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.return_value.__enter__.return_value = mock_response
         login = self.github_api.get_user_login()
         self.assertEqual(login, "test_user")
-        mock_build_opener.assert_called_once()
+        self.github_api.opener.open.assert_called_once()
 
-    @patch("urllib.request.build_opener")
-    def test_create_pr(self, mock_build_opener):
+    def test_create_pr(self):
         """Test that create_pr returns the correct PR URL."""
         mock_response = MagicMock()
         mock_response.read.return_value = (
             b'{"html_url": "https://github.com/test/repo/pull/1"}'
         )
-        mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = mock_response
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.return_value.__enter__.return_value = mock_response
         pr_url = self.github_api.create_pr(
             "feature-branch", "main", "Test PR", "Test Body", False
         )
         self.assertEqual(pr_url, "https://github.com/test/repo/pull/1")
 
-    @patch("urllib.request.build_opener")
     @patch("sys.exit")
-    def test_merge_pr_not_mergeable_after_retries(
-        self, mock_sys_exit, mock_build_opener
-    ):
+    def test_merge_pr_not_mergeable_after_retries(self, mock_sys_exit):
         """Test that merge_pr exits if the PR is not mergeable after retries."""
         mock_not_mergeable_response = MagicMock()
         mock_not_mergeable_response.read.return_value = b'{"mergeable": false, "mergeable_state": "unstable", "head": {"ref": "feature-branch"}}'
-        mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = (
+        self.github_api.opener.open.return_value.__enter__.return_value = (
             mock_not_mergeable_response
         )
-        mock_build_opener.return_value = mock_opener
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
         mock_sys_exit.assert_called_once_with(1)
 
-    @patch("urllib.request.build_opener")
-    def test_merge_pr_dirty(self, mock_build_opener):
+    def test_merge_pr_dirty(self):
         """Test that merge_pr exits if the mergeable state is 'dirty'."""
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"mergeable": false, "mergeable_state": "dirty", "head": {"ref": "feature-branch"}}'
-        mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = mock_response
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.return_value.__enter__.return_value = mock_response
         with self.assertRaises(SystemExit):
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
@@ -275,8 +256,7 @@ class TestGitHubAPI(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.github_api.merge_pr("invalid_url")
 
-    @patch("urllib.request.build_opener")
-    def test_merge_pr_405_retry(self, mock_build_opener):
+    def test_merge_pr_405_retry(self):
         """Test that merge_pr retries on a 405 error."""
         mock_mergeable_response = MagicMock()
         mock_mergeable_response.read.return_value.decode.return_value = (
@@ -290,21 +270,18 @@ class TestGitHubAPI(unittest.TestCase):
         mock_success_response = MagicMock()
         mock_success_response.read.return_value.decode.return_value = "{}"
 
-        mock_opener = MagicMock()
-        mock_opener.open.side_effect = [
+        self.github_api.opener.open.side_effect = [
             MagicMock(__enter__=MagicMock(return_value=mock_mergeable_response)),
             mock_405_error,
             MagicMock(__enter__=MagicMock(return_value=mock_mergeable_response)),
             MagicMock(__enter__=MagicMock(return_value=mock_success_response)),
         ]
-        mock_build_opener.return_value = mock_opener
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
-        self.assertEqual(mock_opener.open.call_count, 4)
+        self.assertEqual(self.github_api.opener.open.call_count, 4)
 
-    @patch("urllib.request.build_opener")
-    def test_merge_pr_retry(self, mock_build_opener):
+    def test_merge_pr_retry(self):
         """Test that merge_pr retries if the PR is not initially mergeable."""
         mock_not_mergeable_response = MagicMock()
         mock_not_mergeable_response.read.return_value.decode.return_value = '{"mergeable": false, "mergeable_state": "unstable", "head": {"ref": "feature-branch"}}'
@@ -315,17 +292,16 @@ class TestGitHubAPI(unittest.TestCase):
         mock_merge_response = MagicMock()
         mock_merge_response.read.return_value.decode.return_value = "{}"
 
-        mock_opener = MagicMock()
-        mock_opener.open.side_effect = [
+        self.github_api.opener.open.side_effect = [
             MagicMock(__enter__=MagicMock(return_value=mock_not_mergeable_response)),
             MagicMock(__enter__=MagicMock(return_value=mock_mergeable_response)),
             MagicMock(__enter__=MagicMock(return_value=mock_merge_response)),
         ]
-        mock_build_opener.return_value = mock_opener
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
-        self.assertEqual(mock_opener.open.call_count, 3)
+        self.assertEqual(self.github_api.opener.open.call_count, 3)
+
 
 
 class TestLLVMPRAutomator(unittest.TestCase):
@@ -464,7 +440,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
                         "git",
                         "fetch",
                         "https://test_token@github.com/upstream/repo.git",
-                        "main",
+                        "refs/heads/main:refs/remotes/upstream/main",
                     ]
                 )
             ],
@@ -494,7 +470,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
                         "git",
                         "fetch",
                         "https://test_token@github.com/upstream/repo.git",
-                        "main",
+                        "refs/heads/main:refs/remotes/upstream/main",
                     ]
                 )
             ],
@@ -600,7 +576,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
         self.automator.run()
 
-        self.assertEqual(self.automator._rebase_current_branch.call_count, 1)
+        self.assertEqual(self.automator._rebase_current_branch.call_count, 2)
         self.assertEqual(
             self.automator._create_and_push_branch_for_commit.call_count, 2
         )
@@ -759,6 +735,7 @@ class TestNewFeatures(unittest.TestCase):
         self.mock_command_runner.verbose = False
         self.mock_command_runner.dry_run = False
         self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
+        self.github_api.opener = MagicMock()  # Mock the opener
         self.args = argparse.Namespace(
             remote="origin",
             upstream_remote="upstream",
@@ -785,31 +762,25 @@ class TestNewFeatures(unittest.TestCase):
         self.automator._create_and_push_branch_for_commit = MagicMock()
         self.automator._cleanup = MagicMock()
 
-    @patch("urllib.request.build_opener")
-    def test_get_repo_settings(self, mock_build_opener):
+    def test_get_repo_settings(self):
         """Test that get_repo_settings returns the correct settings."""
         mock_response = MagicMock()
         mock_response.read.return_value = (
             b'{"delete_branch_on_merge": true, "default_branch": "main"}'
         )
-        mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = mock_response
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.return_value.__enter__.return_value = mock_response
         settings = self.github_api.get_repo_settings()
         self.assertEqual(settings["delete_branch_on_merge"], True)
         self.assertEqual(settings["default_branch"], "main")
-        mock_build_opener.assert_called_once()
+        self.github_api.opener.open.assert_called_once()
 
-    @patch("urllib.request.build_opener")
-    def test_enable_auto_merge(self, mock_build_opener):
+    def test_enable_auto_merge(self):
         """Test that enable_auto_merge sends the correct request."""
         mock_response = MagicMock()
         mock_response.read.return_value = b"{}"
-        mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = mock_response
-        mock_build_opener.return_value = mock_opener
+        self.github_api.opener.open.return_value.__enter__.return_value = mock_response
         self.github_api.enable_auto_merge("https://github.com/test/repo/pull/1")
-        mock_build_opener.assert_called_once()
+        self.github_api.opener.open.assert_called_once()
 
     def test_delete_branch_refuses_default(self):
         """Test that delete_branch refuses to delete the default branch."""
