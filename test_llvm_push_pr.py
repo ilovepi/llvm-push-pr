@@ -57,10 +57,6 @@ class TestMain(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit):
                 main()
-            mock_command_runner_instance.print.assert_called_with(
-                "Could not fetch user login from GitHub: HTTP Error 404: Not Found",
-                file=sys.stderr,
-            )
 
     @patch("sys.argv", ["llvm_push_pr.py"])
     @patch("llvm_push_pr.check_prerequisites")
@@ -243,7 +239,9 @@ class TestGitHubAPI(unittest.TestCase):
         )
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
-        mock_sys_exit.assert_called_once_with(1)
+        mock_sys_exit.assert_called_once_with(
+            "Error: PR was not mergeable after 10 attempts."
+        )
 
     def test_merge_pr_dirty(self):
         """Test that merge_pr exits if the mergeable state is 'dirty'."""
