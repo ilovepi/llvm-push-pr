@@ -36,6 +36,10 @@ class CommandRunner:
             return
         print(message, file=file)
 
+    def verbose_print(self, message: str, file=sys.stdout) -> None:
+        if self.verbose:
+            print(message, file)
+
     def run_command(
         self,
         command: List[str],
