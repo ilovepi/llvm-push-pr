@@ -337,33 +337,9 @@ class LLVMPRAutomator:
         self.runner.print(
             f"Fetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
         )
-        # Get the actual URL for the upstream remote.
-        upstream_remote_url_result = self._run_cmd(
-            ["git", "remote", "get-url", self.args.upstream_remote],
-            capture_output=True,
-            text=True,
-            read_only=True,
+        authenticated_upstream_url = self._get_authenticated_remote_url(
+            self.args.upstream_remote
         )
-        upstream_remote_url = upstream_remote_url_result.stdout.strip()
-
-        # Transform the URL to an authenticated HTTPS format.
-        authenticated_upstream_url: str
-        if upstream_remote_url.startswith("git@github.com:"):
-            # Convert SSH to HTTPS and inject token
-            authenticated_upstream_url = upstream_remote_url.replace(
-                "git@github.com:", f"https://{self.token}@github.com/"
-            )
-        elif upstream_remote_url.startswith("https://github.com/"):
-            # Inject token into existing HTTPS URL
-            authenticated_upstream_url = upstream_remote_url.replace(
-                "https://", f"https://{self.token}@"
-            )
-        else:
-            self.runner.print(
-                f"Error: Unsupported upstream remote URL format: {upstream_remote_url}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
 
         self._run_cmd(["git", "fetch", authenticated_upstream_url, self.args.base])
 
@@ -393,6 +369,28 @@ class LLVMPRAutomator:
                 self.runner.print("Aborting rebase...", file=sys.stderr)
                 self._run_cmd(["git", "rebase", "--abort"], check=False)
             sys.exit(1)
+
+    def _get_authenticated_remote_url(self, remote_name: str) -> str:
+        remote_url_result = self._run_cmd(
+            ["git", "remote", "get-url", remote_name],
+            capture_output=True,
+            text=True,
+            read_only=True,
+        )
+        remote_url = remote_url_result.stdout.strip()
+        if remote_url.startswith("git@github.com:"):
+            return remote_url.replace(
+                "git@github.com:", f"https://{self.token}@github.com/"
+            )
+        if remote_url.startswith("https://github.com/"):
+            return remote_url.replace(
+                "https://", f"https://{self.token}@"
+            )
+        self.runner.print(
+            f"Error: Unsupported remote URL format: {remote_url}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     def _get_commit_stack(self) -> List[str]:
         target = f"{self.args.upstream_remote}/{self.args.base}"
