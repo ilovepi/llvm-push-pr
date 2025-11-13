@@ -180,13 +180,13 @@ class GitHubAPI:
     def get_repo_settings(self) -> dict:
         return self._request_and_parse_json("GET", f"/repos/{REPO_SLUG}")
 
-    def merge_pr(self, pr_url: str):
+    def merge_pr(self, pr_url: str) -> Optional[str]:
         if not pr_url:
-            return
+            return None
 
         if self.runner.dry_run:
             self.runner.print(f"[Dry Run] Would merge {pr_url}")
-            return
+            return None
 
         pr_number_match = re.search(r"/pull/(\d+)", pr_url)
         if not pr_number_match:

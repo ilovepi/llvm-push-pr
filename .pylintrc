@@ -1,5 +1,5 @@
 [MAIN]
-disable=R0913,R0917,R0903,C0301,C0103,R0914
+disable=R0913,R0917,R0903,C0301,C0103,R0914,C0116
 
 [BASIC]
 # Allow uppercase constant names.
