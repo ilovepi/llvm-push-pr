@@ -244,12 +244,16 @@ class TestGitHubAPI(unittest.TestCase):
 
     @patch("urllib.request.build_opener")
     @patch("sys.exit")
-    def test_merge_pr_not_mergeable_after_retries(self, mock_sys_exit, mock_build_opener):
+    def test_merge_pr_not_mergeable_after_retries(
+        self, mock_sys_exit, mock_build_opener
+    ):
         """Test that merge_pr exits if the PR is not mergeable after retries."""
         mock_not_mergeable_response = MagicMock()
         mock_not_mergeable_response.read.return_value = b'{"mergeable": false, "mergeable_state": "unstable", "head": {"ref": "feature-branch"}}'
         mock_opener = MagicMock()
-        mock_opener.open.return_value.__enter__.return_value = mock_not_mergeable_response
+        mock_opener.open.return_value.__enter__.return_value = (
+            mock_not_mergeable_response
+        )
         mock_build_opener.return_value = mock_opener
         with patch("time.sleep"):  # Don't actually sleep
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
