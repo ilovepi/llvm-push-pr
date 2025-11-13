@@ -475,6 +475,37 @@ class LLVMPRAutomator:
         self.created_branches.append(branch_name)
         return branch_name
 
+    def _process_commit(
+        self, commit_hash: str, base_branch_name: str, index: int
+    ) -> None:
+        commit_title, commit_body = self._get_commit_details(commit_hash)
+
+        temp_branch = self._create_and_push_branch_for_commit(
+            commit_hash, base_branch_name, index
+        )
+        pr_url = self.github_api.create_pr(
+            head_branch=temp_branch,
+            base_branch=self.args.base,
+            title=commit_title,
+            body=commit_body,
+            draft=self.args.draft,
+        )
+
+        if not self.args.no_merge:
+            if self.args.auto_merge:
+                self.github_api.enable_auto_merge(pr_url)
+            else:
+                merged_branch = self.github_api.merge_pr(pr_url)
+                if merged_branch and not self.repo_settings.get(
+                    "delete_branch_on_merge"
+                ):
+                    self.github_api.delete_branch(
+                        merged_branch, self.repo_settings.get("default_branch")
+                    )
+
+            if temp_branch in self.created_branches:
+                self.created_branches.remove(temp_branch)
+
     def run(self):
         self.repo_settings = self.github_api.get_repo_settings()
         self.original_branch = self._get_current_branch()
@@ -494,43 +525,17 @@ class LLVMPRAutomator:
                 first_commit_title, _ = self._get_commit_details(initial_commits[0])
                 branch_base_name = self._sanitize_for_branch_name(first_commit_title)
 
-            for i in range(num_commits):
+            for i, commit_to_process in enumerate(initial_commits):
                 if i > 0:
                     self._rebase_current_branch()
 
+                # After a rebase, the commit hashes change, so we need to get the
+                # latest commit stack.
                 commits = self._get_commit_stack()
                 if not commits:
                     self.runner.print("Success! All commits have been landed.")
                     break
-
-                commit_to_process = commits[0]
-                commit_title, commit_body = self._get_commit_details(commit_to_process)
-
-                temp_branch = self._create_and_push_branch_for_commit(
-                    commit_to_process, branch_base_name, i
-                )
-                pr_url = self.github_api.create_pr(
-                    head_branch=temp_branch,
-                    base_branch=self.args.base,
-                    title=commit_title,
-                    body=commit_body,
-                    draft=self.args.draft,
-                )
-
-                if not self.args.no_merge:
-                    if self.args.auto_merge:
-                        self.github_api.enable_auto_merge(pr_url)
-                    else:
-                        merged_branch = self.github_api.merge_pr(pr_url)
-                        if merged_branch and not self.repo_settings.get(
-                            "delete_branch_on_merge"
-                        ):
-                            self.github_api.delete_branch(
-                                merged_branch, self.repo_settings.get("default_branch")
-                            )
-
-                    if temp_branch in self.created_branches:
-                        self.created_branches.remove(temp_branch)
+                self._process_commit(commits[0], branch_base_name, i)
 
         finally:
             self._cleanup()
