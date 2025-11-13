@@ -61,11 +61,9 @@ class CommandRunner:
                 input=stdin_input,
             )
         except FileNotFoundError:
-            self.print(
-                f"Error: Command '{command[0]}' not found. Is it installed and in your PATH?",
-                file=sys.stderr,
+            sys.exit(
+                f"Error: Command '{command[0]}' not found. Is it installed and in your PATH?"
             )
-            sys.exit(1)
         except subprocess.CalledProcessError as e:
             self.print(f"Error running command: {' '.join(command)}", file=sys.stderr)
             if e.stdout:
@@ -192,11 +190,7 @@ class GitHubAPI:
 
         pr_number_match = re.search(r"/pull/(\d+)", pr_url)
         if not pr_number_match:
-            self.runner.print(
-                f"Could not extract PR number from URL: {pr_url}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            sys.exit(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
         head_branch = ""
@@ -235,8 +229,7 @@ class GitHubAPI:
                     else:
                         raise e
             elif pr_data["mergeable_state"] == "dirty":
-                self.runner.print("Error: Merge conflict.", file=sys.stderr)
-                sys.exit(1)
+                sys.exit("Error: Merge conflict.")
             else:
                 self.runner.print(
                     f"PR not mergeable yet ({pr_data['mergeable_state']}). "
@@ -244,11 +237,7 @@ class GitHubAPI:
                 )
                 time.sleep(retry_delay)
 
-        self.runner.print(
-            f"Error: PR was not mergeable after {max_retries} attempts.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        sys.exit(f"Error: PR was not mergeable after {max_retries} attempts.")
 
     def enable_auto_merge(self, pr_url: str):
         if not pr_url:
@@ -260,11 +249,7 @@ class GitHubAPI:
 
         pr_number_match = re.search(r"/pull/(\d+)", pr_url)
         if not pr_number_match:
-            self.runner.print(
-                f"Could not extract PR number from URL: {pr_url}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            sys.exit(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
         self.runner.print(f"Enabling auto-merge for {pr_url}...")
@@ -340,11 +325,9 @@ class LLVMPRAutomator:
             read_only=True,
         )
         if result.stdout.strip():
-            self.runner.print(
-                "Error: Your working tree is dirty. Please stash or commit your changes.",
-                file=sys.stderr,
+            sys.exit(
+                "Error: Your working tree is dirty. Please stash or commit your changes."
             )
-            sys.exit(1)
 
     def _rebase_current_branch(self):
         self._check_work_tree_is_clean()
@@ -383,12 +366,12 @@ class LLVMPRAutomator:
                 text=True,
                 read_only=True,
             )
-            if (
-                rebase_status_result.returncode == 0
-            ):  # REBASE_HEAD exists, so rebase is in progress
+
+            # REBASE_HEAD exists, so rebase is in progress
+            if rebase_status_result.returncode == 0:
                 self.runner.print("Aborting rebase...", file=sys.stderr)
                 self._run_cmd(["git", "rebase", "--abort"], check=False)
-            sys.exit(1)
+            sys.exit("Error: rebase operation failed.")
 
     def _get_authenticated_remote_url(self, remote_name: str) -> str:
         """
@@ -410,11 +393,7 @@ class LLVMPRAutomator:
             )
         if remote_url.startswith("https://github.com/"):
             return remote_url.replace("https://", f"https://{self.token}@")
-        self.runner.print(
-            f"Error: Unsupported remote URL format: {remote_url}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        sys.exit(f"Error: Unsupported remote URL format: {remote_url}")
 
     def _get_commit_stack(self) -> List[str]:
         target = f"{self.args.upstream_remote}/{self.args.base}"
@@ -426,11 +405,7 @@ class LLVMPRAutomator:
         )
         merge_base = merge_base_result.stdout.strip()
         if not merge_base:
-            self.runner.print(
-                f"Error: Could not find a merge base between HEAD and {target}.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            sys.exit(f"Error: Could not find a merge base between HEAD and {target}.")
 
         result = self._run_cmd(
             ["git", "rev-list", "--reverse", f"{merge_base}..HEAD"],
@@ -462,19 +437,13 @@ class LLVMPRAutomator:
     def _validate_merge_config(self, num_commits: int) -> None:
         if num_commits > 1:
             if self.args.auto_merge:
-                self.runner.print(
-                    "Error: --auto-merge is only supported for a single commit.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                sys.exit("Error: --auto-merge is only supported for a single commit.")
 
             if self.args.no_merge:
-                self.runner.print(
+                sys.exit(
                     "Error: --no-merge is only supported for a single commit. "
-                    "For stacks, the script must merge sequentially.",
-                    file=sys.stderr,
+                    "For stacks, the script must merge sequentially."
                 )
-                sys.exit(1)
 
         self.runner.print(f"Found {num_commits} commit(s) to process.")
 
@@ -577,11 +546,7 @@ def check_prerequisites(runner: CommandRunner):
     runner.print("Checking prerequisites...")
     runner.run_command(["git", "--version"], capture_output=True, read_only=True)
     if not os.getenv(LLVM_GITHUB_TOKEN_VAR):
-        runner.print(
-            f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        sys.exit(f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.")
 
     result = runner.run_command(
         ["git", "rev-parse", "--is-inside-work-tree"],
@@ -591,10 +556,7 @@ def check_prerequisites(runner: CommandRunner):
         read_only=True,
     )
     if result.returncode != 0 or result.stdout.strip() != "true":
-        runner.print(
-            "Error: This script must be run inside a git repository.", file=sys.stderr
-        )
-        sys.exit(1)
+        sys.exit("Error: This script must be run inside a git repository.")
     runner.print("Prerequisites met.")
 
 
@@ -619,10 +581,7 @@ def main():
             user_login = temp_api.get_user_login()
             default_prefix = f"{user_login}/"
         except urllib.error.HTTPError as e:
-            command_runner.print(
-                f"Could not fetch user login from GitHub: {e}", file=sys.stderr
-            )
-            sys.exit(1)
+            sys.exit(f"Could not fetch user login from GitHub: {e}")
 
     parser.add_argument(
         "--base",
