@@ -87,7 +87,9 @@ class GitHubAPI:
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "llvm-push-pr",
         }
-        self.opener = urllib.request.build_opener(urllib.request.HTTPHandler(), urllib.request.HTTPSHandler())
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPHandler(), urllib.request.HTTPSHandler()
+        )
 
     def _request(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
@@ -104,7 +106,9 @@ class GitHubAPI:
             data = json.dumps(json_payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
 
-        req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+        req = urllib.request.Request(
+            url, data=data, headers=headers, method=method.upper()
+        )
 
         try:
             return self.opener.open(req, timeout=30)
@@ -115,7 +119,9 @@ class GitHubAPI:
             if self.runner.verbose:
                 error_body = e.read().decode()
                 if error_body:
-                    self.runner.print(f"Error response body: {error_body}", file=sys.stderr)
+                    self.runner.print(
+                        f"Error response body: {error_body}", file=sys.stderr
+                    )
             raise
 
     def _request_and_parse_json(
@@ -345,7 +351,9 @@ class LLVMPRAutomator:
             f"Fetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
         )
 
-        authenticated_url = self._get_authenticated_remote_url(self.args.upstream_remote)
+        authenticated_url = self._get_authenticated_remote_url(
+            self.args.upstream_remote
+        )
         refspec = f"refs/heads/{self.args.base}:refs/remotes/{self.args.upstream_remote}/{self.args.base}"
         self._run_cmd(["git", "fetch", authenticated_url, refspec])
 
