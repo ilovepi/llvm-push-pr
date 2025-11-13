@@ -19,7 +19,7 @@ REPO_SLUG = "ilovepi/llvm-push-pr"
 
 class CommandRunner:
     """Handles command execution and output.
-       Supports dry runs and verbosity level."""
+    Supports dry runs and verbosity level."""
 
     def __init__(
         self, dry_run: bool = False, verbose: bool = False, quiet: bool = False
@@ -84,16 +84,18 @@ class GitHubAPI:
             "Accept": "application/vnd.github.v3+json",
         }
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> str:
+    def _request(
+        self, method: str, endpoint: str, json_payload: Optional[dict] = None
+    ) -> str:
         url = f"{self.BASE_URL}{endpoint}"
         if self.runner.verbose:
             self.runner.print(f"API Request: {method.upper()} {url}")
-            if "json" in kwargs:
-                self.runner.print(f"Payload: {kwargs['json']}")
+            if json_payload:
+                self.runner.print(f"Payload: {json_payload}")
 
         data = None
-        if "json" in kwargs:
-            data = json.dumps(kwargs["json"]).encode("utf-8")
+        if json_payload:
+            data = json.dumps(json_payload).encode("utf-8")
             self.headers["Content-Type"] = "application/json"
 
         req = urllib.request.Request(
@@ -129,7 +131,9 @@ class GitHubAPI:
             "base": base_branch,
             "draft": draft,
         }
-        response_text = self._request("post", f"/repos/{REPO_SLUG}/pulls", json=data)
+        response_text = self._request(
+            "post", f"/repos/{REPO_SLUG}/pulls", json_payload=data
+        )
         pr_url = json.loads(response_text).get("html_url")
         if not self.runner.dry_run:
             self.runner.print(f"Pull request created: {pr_url}")
@@ -178,7 +182,7 @@ class GitHubAPI:
                     self._request(
                         "put",
                         f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
-                        json=merge_data,
+                        json_payload=merge_data,
                     )
                     self.runner.print("Successfully merged.")
                     time.sleep(2)
@@ -233,7 +237,7 @@ class GitHubAPI:
         self._request(
             "put",
             f"/repos/{REPO_SLUG}/pulls/{pr_number}/auto-merge",
-            json=data,
+            json_payload=data,
         )
         self.runner.print("Auto-merge enabled.")
 
