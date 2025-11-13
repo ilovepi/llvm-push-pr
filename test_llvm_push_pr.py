@@ -482,7 +482,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             [], 0, "M some_file"
         )
         with self.assertRaises(SystemExit):
-            self.automator._check_work_tree_is_clean()
+            self.automator._is_work_tree_clean()
 
     def test_sanitize_for_branch_name_fallback(self):
         """Test the fallback case for _sanitize_for_branch_name."""
