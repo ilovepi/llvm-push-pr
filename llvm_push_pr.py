@@ -513,6 +513,7 @@ class LLVMPRAutomator:
         self.runner.print(f"On branch: {self.original_branch}")
 
         try:
+            self._rebase_current_branch()
             initial_commits = self._get_commit_stack()
 
             if not initial_commits:
