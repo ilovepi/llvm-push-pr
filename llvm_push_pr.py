@@ -2,14 +2,15 @@
 """A script to automate the creation and landing of a stack of Pull Requests."""
 
 import argparse
+import http.client
+import json
 import os
 import re
 import subprocess
 import sys
 import time
-import json
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import List, Optional
 
 
@@ -86,7 +87,7 @@ class GitHubAPI:
 
     def _request(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
-    ) -> str:
+    ) -> http.client.HTTPResponse:
         url = f"{self.BASE_URL}{endpoint}"
         if self.runner.verbose:
             self.runner.print(f"API Request: {method.upper()} {url}")
@@ -94,26 +95,42 @@ class GitHubAPI:
                 self.runner.print(f"Payload: {json_payload}")
 
         data = None
+        headers = self.headers.copy()
         if json_payload:
             data = json.dumps(json_payload).encode("utf-8")
-            self.headers["Content-Type"] = "application/json"
+            headers["Content-Type"] = "application/json"
 
-        req = urllib.request.Request(
-            url, data=data, headers=self.headers, method=method
-        )
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                return response.read().decode("utf-8")
+            return urllib.request.urlopen(req, timeout=30)
         except urllib.error.HTTPError as e:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
             )
             raise
 
+    def _request_and_parse_json(
+        self, method: str, endpoint: str, json_payload: Optional[dict] = None
+    ) -> dict:
+        with self._request(method, endpoint, json_payload) as response:
+            response_text = response.read().decode("utf-8")
+            if response_text:
+                return json.loads(response_text)
+            return {}
+
+    def _request_no_content(
+        self, method: str, endpoint: str, json_payload: Optional[dict] = None
+    ) -> None:
+        with self._request(method, endpoint, json_payload) as response:
+            if response.status != 204:
+                self.runner.print(
+                    f"Warning: Expected status 204, but got {response.status}",
+                    file=sys.stderr,
+                )
+
     def get_user_login(self) -> str:
-        response_text = self._request("get", "/user")
-        return json.loads(response_text)["login"]
+        return self._request_and_parse_json("get", "/user")["login"]
 
     def create_pr(
         self,
@@ -131,17 +148,16 @@ class GitHubAPI:
             "base": base_branch,
             "draft": draft,
         }
-        response_text = self._request(
+        response_data = self._request_and_parse_json(
             "post", f"/repos/{REPO_SLUG}/pulls", json_payload=data
         )
-        pr_url = json.loads(response_text).get("html_url")
+        pr_url = response_data.get("html_url")
         if not self.runner.dry_run:
             self.runner.print(f"Pull request created: {pr_url}")
         return pr_url
 
     def get_repo_settings(self) -> dict:
-        response_text = self._request("get", f"/repos/{REPO_SLUG}")
-        return json.loads(response_text)
+        return self._request_and_parse_json("get", f"/repos/{REPO_SLUG}")
 
     def merge_pr(self, pr_url: str):
         if not pr_url:
@@ -168,10 +184,9 @@ class GitHubAPI:
                 f"Attempting to merge {pr_url} (attempt {i+1}/{max_retries})..."
             )
 
-            pr_data_response_text = self._request(
+            pr_data = self._request_and_parse_json(
                 "get", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
             )
-            pr_data = json.loads(pr_data_response_text)
             head_branch = pr_data["head"]["ref"]
 
             if pr_data["mergeable"]:
@@ -179,7 +194,7 @@ class GitHubAPI:
                     "merge_method": "squash",
                 }
                 try:
-                    self._request(
+                    self._request_no_content(
                         "put",
                         f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
                         json_payload=merge_data,
@@ -234,7 +249,7 @@ class GitHubAPI:
             "enabled": True,
             "merge_method": "squash",
         }
-        self._request(
+        self._request_no_content(
             "put",
             f"/repos/{REPO_SLUG}/pulls/{pr_number}/auto-merge",
             json_payload=data,
@@ -250,7 +265,9 @@ class GitHubAPI:
             return
         self.runner.print(f"Deleting remote branch '{branch_name}'")
         try:
-            self._request("delete", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}")
+            self._request_no_content(
+                "delete", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
+            )
         except urllib.error.HTTPError as e:
             if e.code == 422 and "Reference does not exist" in e.read().decode("utf-8"):
                 if self.runner.verbose:
