@@ -128,10 +128,10 @@ class GitHubAPI:
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
     ) -> dict:
         with self._request(method, endpoint, json_payload) as response:
-            # expect a 200 OK status on success and JSON body.
-            if response.status != 200:
+            # expect a 200 'OK' or 201 'Created' status on success and JSON body.
+            if response.status not in [200, 201]:
                 self.runner.print(
-                    f"Warning: Expected status 200, but got {response.status}",
+                    f"Warning: Expected status 200 or 201, but got {response.status}",
                     file=sys.stderr,
                 )
 
