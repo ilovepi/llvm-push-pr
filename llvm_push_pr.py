@@ -128,6 +128,13 @@ class GitHubAPI:
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
     ) -> dict:
         with self._request(method, endpoint, json_payload) as response:
+            # expect a 200 OK status on success and JSON body.
+            if response.status != 200:
+                self.runner.print(
+                    f"Warning: Expected status 200, but got {response.status}",
+                    file=sys.stderr,
+                )
+
             response_text = response.read().decode("utf-8")
             if response_text:
                 return json.loads(response_text)
@@ -137,6 +144,8 @@ class GitHubAPI:
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
     ) -> None:
         with self._request(method, endpoint, json_payload) as response:
+            # expected a 204 No Content status on success,
+            # indicating the operation was successful but there is no body.
             if response.status != 204:
                 self.runner.print(
                     f"Warning: Expected status 204, but got {response.status}",
@@ -348,6 +357,9 @@ class LLVMPRAutomator:
         authenticated_url = self._get_authenticated_remote_url(
             self.args.upstream_remote
         )
+        # Use a refspec to explicitly update the local remote-tracking branch (e.g., origin/main)
+        # when fetching from an authenticated URL. This ensures that 'git rebase origin/main'
+        # operates on the most up-to-date remote state.
         refspec = f"refs/heads/{self.args.base}:refs/remotes/{self.args.upstream_remote}/{self.args.base}"
         self._run_cmd(["git", "fetch", authenticated_url, refspec])
 
