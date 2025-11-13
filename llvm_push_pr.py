@@ -447,7 +447,7 @@ class LLVMPRAutomator:
         body = parts[1] if len(parts) > 1 else ""
         return title, body
 
-    def _sanitize_for_branch_name(self, text: str) -> str:
+    def _sanitize_branch_name(self, text: str) -> str:
         sanitized = re.sub(r"[^\w\s-]", "", text).strip().lower()
         sanitized = re.sub(r"[-\s]+", "-", sanitized)
         # Use "auto-pr" as a fallback.
@@ -538,7 +538,7 @@ class LLVMPRAutomator:
             branch_base_name = self.original_branch
             if self.original_branch in ["main", "master"]:
                 first_commit_title, _ = self._get_commit_details(initial_commits[0])
-                branch_base_name = self._sanitize_for_branch_name(first_commit_title)
+                branch_base_name = self._sanitize_branch_name(first_commit_title)
 
             for i, commit_to_process in enumerate(initial_commits):
                 if i > 0:
