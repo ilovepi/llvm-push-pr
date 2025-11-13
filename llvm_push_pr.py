@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """A script to automate the creation and landing of a stack of Pull Requests."""
 
+
+class LlvmPrError(Exception):
+    """Custom exception for errors in the PR automator script."""
+
+
 import argparse
 import json
 import os
@@ -194,7 +199,7 @@ class GitHubAPI:
 
         pr_number_match = re.search(r"/pull/(\d+)", pr_url)
         if not pr_number_match:
-            sys.exit(f"Could not extract PR number from URL: {pr_url}")
+            raise LlvmPrError(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
         head_branch = ""
@@ -233,7 +238,7 @@ class GitHubAPI:
                     else:
                         raise e
             elif pr_data["mergeable_state"] == "dirty":
-                sys.exit("Error: Merge conflict.")
+                raise LlvmPrError("Merge conflict.")
             else:
                 self.runner.print(
                     f"PR not mergeable yet ({pr_data['mergeable_state']}). "
@@ -241,7 +246,7 @@ class GitHubAPI:
                 )
                 time.sleep(retry_delay)
 
-        sys.exit(f"Error: PR was not mergeable after {max_retries} attempts.")
+        raise LlvmPrError(f"PR was not mergeable after {max_retries} attempts.")
 
     def enable_auto_merge(self, pr_url: str) -> None:
         if not pr_url:
@@ -253,7 +258,7 @@ class GitHubAPI:
 
         pr_number_match = re.search(r"/pull/(\d+)", pr_url)
         if not pr_number_match:
-            sys.exit(f"Could not extract PR number from URL: {pr_url}")
+            raise LlvmPrError(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
         self.runner.print(f"Enabling auto-merge for {pr_url}...")
@@ -268,7 +273,9 @@ class GitHubAPI:
         )
         self.runner.print("Auto-merge enabled.")
 
-    def delete_branch(self, branch_name: str, default_branch: Optional[str] = None) -> None:
+    def delete_branch(
+        self, branch_name: str, default_branch: Optional[str] = None
+    ) -> None:
         if default_branch and branch_name == default_branch:
             self.runner.print(
                 f"Error: Refusing to delete the default branch '{branch_name}'.",
@@ -309,7 +316,9 @@ class LLVMPRAutomator:
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
 
-    def _run_cmd(self, command: List[str], read_only: bool = False, **kwargs) -> subprocess.CompletedProcess:
+    def _run_cmd(
+        self, command: List[str], read_only: bool = False, **kwargs
+    ) -> subprocess.CompletedProcess:
         return self.runner.run_command(command, read_only=read_only, **kwargs)
 
     def _get_current_branch(self) -> str:
@@ -329,8 +338,8 @@ class LLVMPRAutomator:
             read_only=True,
         )
         if result.stdout.strip():
-            sys.exit(
-                "Error: Your working tree is dirty. Please stash or commit your changes."
+            raise LlvmPrError(
+                "Your working tree is dirty. Please stash or commit your changes."
             )
 
     def _rebase_current_branch(self) -> None:
@@ -375,7 +384,7 @@ class LLVMPRAutomator:
             if rebase_status_result.returncode == 0:
                 self.runner.print("Aborting rebase...", file=sys.stderr)
                 self._run_cmd(["git", "rebase", "--abort"], check=False)
-            sys.exit("Error: rebase operation failed.")
+            raise LlvmPrError("rebase operation failed.")
 
     def _get_authenticated_remote_url(self, remote_name: str) -> str:
         """
@@ -397,7 +406,7 @@ class LLVMPRAutomator:
             )
         if remote_url.startswith("https://github.com/"):
             return remote_url.replace("https://", f"https://{self.token}@")
-        sys.exit(f"Error: Unsupported remote URL format: {remote_url}")
+        raise LlvmPrError(f"Unsupported remote URL format: {remote_url}")
 
     def _get_commit_stack(self) -> List[str]:
         target = f"{self.args.upstream_remote}/{self.args.base}"
@@ -409,7 +418,7 @@ class LLVMPRAutomator:
         )
         merge_base = merge_base_result.stdout.strip()
         if not merge_base:
-            sys.exit(f"Error: Could not find a merge base between HEAD and {target}.")
+            raise LlvmPrError(f"Could not find a merge base between HEAD and {target}.")
 
         result = self._run_cmd(
             ["git", "rev-list", "--reverse", f"{merge_base}..HEAD"],
@@ -441,11 +450,11 @@ class LLVMPRAutomator:
     def _validate_merge_config(self, num_commits: int) -> None:
         if num_commits > 1:
             if self.args.auto_merge:
-                sys.exit("Error: --auto-merge is only supported for a single commit.")
+                raise LlvmPrError("--auto-merge is only supported for a single commit.")
 
             if self.args.no_merge:
-                sys.exit(
-                    "Error: --no-merge is only supported for a single commit. "
+                raise LlvmPrError(
+                    "--no-merge is only supported for a single commit. "
                     "For stacks, the script must merge sequentially."
                 )
 
@@ -562,7 +571,7 @@ def check_prerequisites(runner: CommandRunner) -> None:
     )
 
     if result.returncode != 0 or result.stdout.strip() != "true":
-        sys.exit("Error: This script must be run inside a git repository.")
+        raise LlvmPrError("This script must be run inside a git repository.")
     runner.print("Prerequisites met.")
 
 
@@ -578,8 +587,7 @@ def main() -> None:
     command_runner = CommandRunner()
     token = os.getenv(LLVM_GITHUB_TOKEN_VAR)
     if not token:
-        sys.exit(f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.")
-
+        raise LlvmPrError(f"{LLVM_GITHUB_TOKEN_VAR} environment variable not set.")
 
     parser.add_argument(
         "--base",
@@ -647,7 +655,7 @@ def main() -> None:
         try:
             args.login = github_api.get_user_login()
         except urllib.error.HTTPError as e:
-            sys.exit(f"Could not fetch user login from GitHub: {e}")
+            raise LlvmPrError(f"Could not fetch user login from GitHub: {e}")
 
     if not args.prefix:
         args.prefix = f"users/{args.login}/"
@@ -655,8 +663,11 @@ def main() -> None:
     if args.prefix and not args.prefix.endswith("/"):
         args.prefix += "/"
 
-    automator = LLVMPRAutomator(args, command_runner, github_api, args.login, token)
-    automator.run()
+    try:
+        automator = LLVMPRAutomator(args, command_runner, github_api, args.login, token)
+        automator.run()
+    except LlvmPrError as e:
+        sys.exit(f"Error: {e}")
 
 
 if __name__ == "__main__":
