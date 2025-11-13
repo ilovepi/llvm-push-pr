@@ -344,12 +344,10 @@ class LLVMPRAutomator:
         self.runner.print(
             f"Fetching from '{self.args.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
         )
-        # authenticated_upstream_url = self._get_authenticated_remote_url(
-        #     self.args.upstream_remote
-        # )
-        #
-        # self._run_cmd(["git", "fetch", authenticated_upstream_url, self.args.base])
-        self._run_cmd(["git", "fetch", self.args.upstream_remote])
+
+        authenticated_url = self._get_authenticated_remote_url(self.args.upstream_remote)
+        refspec = f"refs/heads/{self.args.base}:refs/remotes/{self.args.upstream_remote}/{self.args.base}"
+        self._run_cmd(["git", "fetch", authenticated_url, refspec])
 
         try:
             self._run_cmd(["git", "rebase", target])
@@ -506,11 +504,6 @@ class LLVMPRAutomator:
                     self.github_api.delete_branch(
                         merged_branch, self.repo_settings.get("default_branch")
                     )
-                # Add a delay to allow the merge to propagate on the remote.
-                # This helps prevent the rebase from failing to see the update.
-                self.runner.print("Waiting for 5 seconds for merge to propagate...")
-                time.sleep(5)
-
             if temp_branch in self.created_branches:
                 self.created_branches.remove(temp_branch)
 
