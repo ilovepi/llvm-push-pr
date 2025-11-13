@@ -488,7 +488,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_sanitize_for_branch_name_fallback(self):
         """Test the fallback case for _sanitize_for_branch_name."""
-        self.assertEqual(self.automator._sanitize_for_branch_name("!@#$"), "auto-pr")
+        self.assertEqual(self.automator._sanitize_branch_name("!@#$"), "auto-pr")
 
     def test_run_with_draft_flag(self):
         """Test that the --draft flag is passed to create_pr."""
@@ -515,15 +515,15 @@ class TestLLVMPRAutomator(unittest.TestCase):
     def test_sanitize_for_branch_name(self):
         """Test that branch names are sanitized correctly."""
         self.assertEqual(
-            self.automator._sanitize_for_branch_name("Branch with spaces"),
+            self.automator._sanitize_branch_name("Branch with spaces"),
             "branch-with-spaces",
         )
         self.assertEqual(
-            self.automator._sanitize_for_branch_name("branch/with/slashes"),
+            self.automator._sanitize_branch_name("branch/with/slashes"),
             "branchwithslashes",
         )
         self.assertEqual(
-            self.automator._sanitize_for_branch_name("branch-with-special-chars!@#$"),
+            self.automator._sanitize_branch_name("branch-with-special-chars!@#$"),
             "branch-with-special-chars",
         )
 
