@@ -437,6 +437,25 @@ class LLVMPRAutomator:
         # Use "auto-pr" as a fallback.
         return sanitized or "auto-pr"
 
+    def _validate_merge_config(self, num_commits: int) -> None:
+        if num_commits > 1:
+            if self.args.auto_merge:
+                self.runner.print(
+                    "Error: --auto-merge is only supported for a single commit.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            if self.args.no_merge:
+                self.runner.print(
+                    "Error: --no-merge is only supported for a single commit. "
+                    "For stacks, the script must merge sequentially.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+        self.runner.print(f"Found {num_commits} commit(s) to process.")
+
     def _create_and_push_branch_for_commit(
         self, commit_hash: str, base_branch_name: str, index: int
     ) -> str:
@@ -469,25 +488,7 @@ class LLVMPRAutomator:
                 self.runner.print("No new commits to process.")
                 return
 
-            num_commits = len(initial_commits)
-
-            if num_commits > 1:
-                if self.args.auto_merge:
-                    self.runner.print(
-                        "Error: --auto-merge is only supported for a single commit.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-
-                if self.args.no_merge:
-                    self.runner.print(
-                        "Error: --no-merge is only supported for a single commit. "
-                        "For stacks, the script must merge sequentially.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-
-            self.runner.print(f"Found {num_commits} commit(s) to process.")
+            self._validate_merge_config(len(initial_commits))
             branch_base_name = self.original_branch
             if self.original_branch in ["main", "master"]:
                 first_commit_title, _ = self._get_commit_details(initial_commits[0])
