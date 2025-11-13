@@ -17,7 +17,8 @@ from http.client import HTTPResponse
 # TODO(user): When submitting upstream, change this to "llvm/llvm-project".
 REPO_SLUG = "ilovepi/llvm-push-pr"
 
-LLVM_GITHUB_TOKEN_VAR= "LLVM_GITHUB_TOKEN"
+LLVM_GITHUB_TOKEN_VAR = "LLVM_GITHUB_TOKEN"
+
 
 class CommandRunner:
     """Handles command execution and output.
@@ -103,8 +104,13 @@ class GitHubAPI:
 
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
+        # Build an opener that respects system proxy settings.
+        # This is crucial for environments with corporate proxies.
+        proxy_handler = urllib.request.ProxyHandler(urllib.request.getproxies())
+        opener = urllib.request.build_opener(proxy_handler)
+
         try:
-            return urllib.request.urlopen(req, timeout=30)
+            return opener.open(req, timeout=30)
         except urllib.error.HTTPError as e:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
@@ -383,9 +389,7 @@ class LLVMPRAutomator:
                 "git@github.com:", f"https://{self.token}@github.com/"
             )
         if remote_url.startswith("https://github.com/"):
-            return remote_url.replace(
-                "https://", f"https://{self.token}@"
-            )
+            return remote_url.replace("https://", f"https://{self.token}@")
         self.runner.print(
             f"Error: Unsupported remote URL format: {remote_url}",
             file=sys.stderr,
@@ -554,7 +558,8 @@ def check_prerequisites(runner: CommandRunner):
     runner.run_command(["git", "--version"], capture_output=True, read_only=True)
     if not os.getenv(LLVM_GITHUB_TOKEN_VAR):
         runner.print(
-            f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.", file=sys.stderr
+            f"Error: {LLVM_GITHUB_TOKEN_VAR} environment variable not set.",
+            file=sys.stderr,
         )
         sys.exit(1)
 
