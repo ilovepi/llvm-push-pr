@@ -8,11 +8,12 @@ import urllib.request
 import urllib.error
 
 from llvm_push_pr import (
-    LLVMPRAutomator,
     CommandRunner,
     GitHubAPI,
+    LLVMPRAutomator,
     check_prerequisites,
     main,
+    LlvmPrError,
 )
 
 
@@ -55,7 +56,7 @@ class TestMain(unittest.TestCase):
         with patch(
             "llvm_push_pr.LLVMPRAutomator", return_value=mock_automator_instance
         ):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(LlvmPrError):
                 main()
 
     @patch("sys.argv", ["llvm_push_pr.py"])
@@ -63,8 +64,10 @@ class TestMain(unittest.TestCase):
     @patch("llvm_push_pr.LLVMPRAutomator")
     @patch("llvm_push_pr.GitHubAPI")
     @patch("llvm_push_pr.CommandRunner")
+    @patch("os.getenv", return_value="test_token")
     def test_main(
         self,
+        mock_getenv,
         mock_command_runner_class,
         mock_github_api,
         mock_automator,
@@ -79,7 +82,6 @@ class TestMain(unittest.TestCase):
         mock_command_runner_instance.run_command.return_value = mock_completed_process
 
         main()
-        mock_automator.assert_called_once()
         mock_automator.return_value.run.assert_called_once()
 
 
@@ -92,7 +94,7 @@ class TestCheckPrerequisites(unittest.TestCase):
             subprocess.CompletedProcess([], 0, ""),  # git --version
             subprocess.CompletedProcess([], 1, "not a git repo"),  # git rev-parse
         ]
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             check_prerequisites(mock_command_runner)
 
     @patch("llvm_push_pr.CommandRunner.run_command")
@@ -101,7 +103,7 @@ class TestCheckPrerequisites(unittest.TestCase):
         """Test that check_prerequisites exits if git is not installed."""
         mock_run_command.side_effect = FileNotFoundError
         mock_command_runner = MagicMock(spec=CommandRunner)
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             check_prerequisites(mock_command_runner)
 
     @patch("llvm_push_pr.CommandRunner.run_command")
@@ -109,7 +111,7 @@ class TestCheckPrerequisites(unittest.TestCase):
     def test_no_github_token(self, mock_getenv, mock_run_command):
         """Test that check_prerequisites exits if GITHUB_TOKEN is not set."""
         mock_command_runner = MagicMock(spec=CommandRunner)
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             check_prerequisites(mock_command_runner)
 
 
@@ -229,31 +231,30 @@ class TestGitHubAPI(unittest.TestCase):
         )
         self.assertEqual(pr_url, "https://github.com/test/repo/pull/1")
 
-    @patch("sys.exit")
-    def test_merge_pr_not_mergeable_after_retries(self, mock_sys_exit):
-        """Test that merge_pr exits if the PR is not mergeable after retries."""
+    def test_merge_pr_not_mergeable_after_retries(self):
+        """Test that merge_pr raises an exception if the PR is not mergeable after retries."""
         mock_not_mergeable_response = MagicMock()
         mock_not_mergeable_response.read.return_value = b'{"mergeable": false, "mergeable_state": "unstable", "head": {"ref": "feature-branch"}}'
         self.github_api.opener.open.return_value.__enter__.return_value = (
             mock_not_mergeable_response
         )
         with patch("time.sleep"):  # Don't actually sleep
-            self.github_api.merge_pr("https://github.com/test/repo/pull/1")
-        mock_sys_exit.assert_called_once_with(
-            "Error: PR was not mergeable after 10 attempts."
-        )
+            with self.assertRaisesRegex(
+                LlvmPrError, "PR was not mergeable after 10 attempts."
+            ):
+                self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
     def test_merge_pr_dirty(self):
         """Test that merge_pr exits if the mergeable state is 'dirty'."""
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"mergeable": false, "mergeable_state": "dirty", "head": {"ref": "feature-branch"}}'
         self.github_api.opener.open.return_value.__enter__.return_value = mock_response
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.github_api.merge_pr("https://github.com/test/repo/pull/1")
 
     def test_merge_pr_invalid_url(self):
         """Test that merge_pr exits if the PR number cannot be parsed."""
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.github_api.merge_pr("invalid_url")
 
     def test_merge_pr_405_retry(self):
@@ -430,7 +431,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
                 [], 1, ""
             ),  # git status (in except block, no rebase in progress)
         ]
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.automator._rebase_current_branch()
         self.automator._run_cmd.assert_has_calls(
             [
@@ -460,7 +461,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             subprocess.CompletedProcess([], 0, ""),  # git status (in except block)
             subprocess.CompletedProcess([], 0, ""),  # git rebase --abort
         ]
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.automator._rebase_current_branch()
         self.automator._run_cmd.assert_has_calls(
             [
@@ -481,7 +482,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator._run_cmd.return_value = subprocess.CompletedProcess(
             [], 0, "M some_file"
         )
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.automator._is_work_tree_clean()
 
     def test_sanitize_for_branch_name_fallback(self):
@@ -706,21 +707,21 @@ class TestLLVMPRAutomator(unittest.TestCase):
         # Un-mock the method for this test
         del self.automator._get_commit_stack
         self.automator._run_cmd.return_value = subprocess.CompletedProcess([], 0, "")
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.automator._get_commit_stack()
 
     def test_run_auto_merge_multiple_commits(self):
         """Test that --auto-merge with multiple commits exits."""
         self.args.auto_merge = True
         self.automator._get_commit_stack.return_value = ["commit1", "commit2"]
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.automator.run()
 
     def test_run_no_merge_multiple_commits(self):
         """Test that --no-merge with multiple commits exits."""
         self.args.no_merge = True
         self.automator._get_commit_stack.return_value = ["commit1", "commit2"]
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LlvmPrError):
             self.automator.run()
 
 
