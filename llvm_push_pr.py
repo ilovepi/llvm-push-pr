@@ -528,24 +528,24 @@ class LLVMPRAutomator:
 
         try:
             self._rebase_current_branch()
-            initial_commits = self._get_commit_stack()
+            commits = self._get_commit_stack()
 
-            if not initial_commits:
+            if not commits:
                 self.runner.print("No new commits to process.")
                 return
 
-            self._validate_merge_config(len(initial_commits))
+            self._validate_merge_config(len(commits))
             branch_base_name = self.original_branch
-            if self.original_branch in ["main", "master"]:
-                first_commit_title, _ = self._get_commit_details(initial_commits[0])
+            if self.original_branch == "main":
+                first_commit_title, _ = self._get_commit_details(commits[0])
                 branch_base_name = self._sanitize_branch_name(first_commit_title)
 
-            for i, commit_to_process in enumerate(initial_commits):
+            for i in range(len(commits)):
                 if i > 0:
                     self._rebase_current_branch()
 
-                # After a rebase, the commit hashes change, so we need to get the
-                # latest commit stack.
+                # After a rebase, the commit hashes change, so we need to get
+                # the latest commit stack.
                 commits = self._get_commit_stack()
                 if not commits:
                     self.runner.print("Success! All commits have been landed.")
