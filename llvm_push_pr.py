@@ -85,7 +85,9 @@ class GitHubAPI:
         self.headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "llvm-push-pr",
         }
+        self.opener = urllib.request.build_opener(urllib.request.HTTPHandler(debuglevel=1), urllib.request.HTTPSHandler(debuglevel=1))
 
     def _request(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
@@ -102,19 +104,18 @@ class GitHubAPI:
             data = json.dumps(json_payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
 
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-
-        # Build an opener that respects system proxy settings.
-        # This is crucial for environments with corporate proxies.
-        proxy_handler = urllib.request.ProxyHandler(urllib.request.getproxies())
-        opener = urllib.request.build_opener(proxy_handler)
+        req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
 
         try:
-            return opener.open(req, timeout=30)
+            return self.opener.open(req, timeout=30)
         except urllib.error.HTTPError as e:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
             )
+            if self.runner.verbose:
+                error_body = e.read().decode()
+                if error_body:
+                    self.runner.print(f"Error response body: {error_body}", file=sys.stderr)
             raise
 
     def _request_and_parse_json(
@@ -137,7 +138,7 @@ class GitHubAPI:
                 )
 
     def get_user_login(self) -> str:
-        return self._request_and_parse_json("get", "/user")["login"]
+        return self._request_and_parse_json("GET", "/user")["login"]
 
     def create_pr(
         self,
@@ -156,7 +157,7 @@ class GitHubAPI:
             "draft": draft,
         }
         response_data = self._request_and_parse_json(
-            "post", f"/repos/{REPO_SLUG}/pulls", json_payload=data
+            "POST", f"/repos/{REPO_SLUG}/pulls", json_payload=data
         )
         pr_url = response_data.get("html_url")
         if not self.runner.dry_run:
@@ -164,7 +165,7 @@ class GitHubAPI:
         return pr_url
 
     def get_repo_settings(self) -> dict:
-        return self._request_and_parse_json("get", f"/repos/{REPO_SLUG}")
+        return self._request_and_parse_json("GET", f"/repos/{REPO_SLUG}")
 
     def merge_pr(self, pr_url: str):
         if not pr_url:
@@ -192,7 +193,7 @@ class GitHubAPI:
             )
 
             pr_data = self._request_and_parse_json(
-                "get", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
+                "GET", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
             )
             head_branch = pr_data["head"]["ref"]
 
@@ -202,7 +203,7 @@ class GitHubAPI:
                 }
                 try:
                     self._request_no_content(
-                        "put",
+                        "PUT",
                         f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
                         json_payload=merge_data,
                     )
@@ -257,7 +258,7 @@ class GitHubAPI:
             "merge_method": "squash",
         }
         self._request_no_content(
-            "put",
+            "PUT",
             f"/repos/{REPO_SLUG}/pulls/{pr_number}/auto-merge",
             json_payload=data,
         )
@@ -273,7 +274,7 @@ class GitHubAPI:
         self.runner.print(f"Deleting remote branch '{branch_name}'")
         try:
             self._request_no_content(
-                "delete", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
+                "DELETE", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
             )
         except urllib.error.HTTPError as e:
             if e.code == 422 and "Reference does not exist" in e.read().decode("utf-8"):
