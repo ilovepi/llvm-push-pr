@@ -391,6 +391,12 @@ class LLVMPRAutomator:
             sys.exit(1)
 
     def _get_authenticated_remote_url(self, remote_name: str) -> str:
+        """
+        Generates an authenticated URL to use for all operations. This includes
+        for local operations, like rebaseing after merging a PR in a stack.
+        This allows the script to avoid reauthenticating (e.g. via ssh), since
+        the token can be reused for all operations.
+        """
         remote_url_result = self._run_cmd(
             ["git", "remote", "get-url", remote_name],
             capture_output=True,
