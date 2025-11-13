@@ -202,7 +202,7 @@ class GitHubAPI:
                     "merge_method": "squash",
                 }
                 try:
-                    self._request_no_content(
+                    self._request_and_parse_json(
                         "PUT",
                         f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
                         json_payload=merge_data,
