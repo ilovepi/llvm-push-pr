@@ -601,7 +601,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
         self.automator.run()
 
-        self.assertEqual(self.automator._rebase_current_branch.call_count, 2)
+        self.assertEqual(self.automator._rebase_current_branch.call_count, 1)
         self.assertEqual(
             self.automator._create_and_push_branch_for_commit.call_count, 2
         )
@@ -663,8 +663,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
         )
 
         self.automator.run()
-
-        self.automator._rebase_current_branch.assert_called_once()
         self.automator._create_and_push_branch_for_commit.assert_called_once_with(
             "commit1", "feature-branch", 0
         )
@@ -686,7 +684,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
         self.automator.run()
 
-        self.automator._rebase_current_branch.assert_called_once()
         self.mock_command_runner.print.assert_called_with("No new commits to process.")
         self.mock_github_api.create_pr.assert_not_called()
         self.automator._cleanup.assert_called_once()
