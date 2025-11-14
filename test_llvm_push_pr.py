@@ -14,6 +14,7 @@ from llvm_push_pr import (
     check_prerequisites,
     main,
     LlvmPrError,
+    PRAutomatorConfig,
 )
 
 
@@ -308,9 +309,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
     def setUp(self):
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
-        self.automator = LLVMPRAutomator(
-            runner=self.mock_command_runner,
-            github_api=self.mock_github_api,
+        self.config = PRAutomatorConfig(
             user_login="test_user",
             token="test_token",
             base_branch="main",
@@ -319,6 +318,11 @@ class TestLLVMPRAutomator(unittest.TestCase):
             draft=False,
             no_merge=False,
             auto_merge=False,
+        )
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.mock_github_api,
+            config=self.config,
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
@@ -483,17 +487,20 @@ class TestLLVMPRAutomator(unittest.TestCase):
     def test_sanitize_for_branch_name_fallback(self):
         """Test the fallback case for _sanitize_for_branch_name."""
         self.assertEqual(self.automator._sanitize_branch_name("!@#$"), "auto-pr")
-
-    def test_run_with_draft_flag(self):
-        """Test that the --draft flag is passed to create_pr."""
-        self.automator.draft = True
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = (
-            "Commit 1 Title",
-            "Commit 1 Body",
+        self.config.draft = True
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.mock_github_api,
+            config=self.config,
         )
-        self.automator._create_and_push_branch_for_commit.return_value = (
-            "test/feature-branch-1"
+        self.automator._run_cmd = MagicMock()
+        self.automator._rebase_current_branch = MagicMock()
+        self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
+        self.automator._get_commit_details = MagicMock(
+            return_value=("Commit 1 Title", "Commit 1 Body")
+        )
+        self.automator._create_and_push_branch_for_commit = MagicMock(
+            return_value="test/feature-branch-1"
         )
 
         self.automator.run()
@@ -522,17 +529,23 @@ class TestLLVMPRAutomator(unittest.TestCase):
         )
 
     def test_run_with_no_merge(self):
-        """Test that --no-merge prevents the script from merging the PR."""
-        self.automator.no_merge = True
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = (
-            "Commit 1 Title",
-            "Commit 1 Body",
+        self.config.no_merge = True
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.mock_github_api,
+            config=self.config,
         )
-        self.automator._create_and_push_branch_for_commit.return_value = (
-            "test/feature-branch-1"
+        self.automator._run_cmd = MagicMock()
+        self.automator._rebase_current_branch = MagicMock()
+        self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
+        self.automator._get_commit_details = MagicMock(
+            return_value=("Commit 1 Title", "Commit 1 Body")
+        )
+        self.automator._create_and_push_branch_for_commit = MagicMock(
+            return_value="test/feature-branch-1"
         )
 
+        self.automator._cleanup = MagicMock()
         self.automator.run()
 
         self.mock_github_api.create_pr.assert_called_once()
@@ -707,17 +720,34 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_run_auto_merge_multiple_commits(self):
         """Test that --auto-merge with multiple commits exits."""
-        self.automator.auto_merge = True
-        self.automator._get_commit_details.return_value = ("Commit Title", "Commit Body")
-        self.automator._get_commit_stack.return_value = ["commit1", "commit2"]
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.mock_github_api,
+            config=self.config,
+        )
+        self.automator._get_commit_details = MagicMock(
+            return_value=("Commit Title", "Commit Body")
+        )
+        self.automator._get_commit_stack = MagicMock(
+            return_value=["commit1", "commit2"]
+        )
         with self.assertRaises(LlvmPrError):
             self.automator.run()
 
     def test_run_no_merge_multiple_commits(self):
         """Test that --no-merge with multiple commits exits."""
-        self.automator.no_merge = True
-        self.automator._get_commit_details.return_value = ("Commit Title", "Commit Body")
-        self.automator._get_commit_stack.return_value = ["commit1", "commit2"]
+        self.config.no_merge = True
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.mock_github_api,
+            config=self.config,
+        )
+        self.automator._get_commit_details = MagicMock(
+            return_value=("Commit Title", "Commit Body")
+        )
+        self.automator._get_commit_stack = MagicMock(
+            return_value=["commit1", "commit2"]
+        )
         with self.assertRaises(LlvmPrError):
             self.automator.run()
 
@@ -733,9 +763,7 @@ class TestNewFeatures(unittest.TestCase):
         self.mock_command_runner.dry_run = False
         self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
         self.github_api.opener = MagicMock()  # Mock the opener
-        self.automator = LLVMPRAutomator(
-            runner=self.mock_command_runner,
-            github_api=self.github_api,
+        self.config = PRAutomatorConfig(
             user_login="test_user",
             token="test_token",
             base_branch="main",
@@ -744,6 +772,11 @@ class TestNewFeatures(unittest.TestCase):
             draft=False,
             no_merge=False,
             auto_merge=False,
+        )
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.github_api,
+            config=self.config,
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
@@ -784,10 +817,21 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_run_with_auto_merge(self):
         """Test that --auto-merge calls enable_auto_merge."""
-        self.automator.auto_merge = True
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = ("Title", "Body")
-        self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
+        self.config.auto_merge = True
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.github_api,
+            config=self.config,
+        )
+        self.automator._run_cmd = MagicMock()
+        self.automator._rebase_current_branch = MagicMock()
+        self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
+        self.automator._get_commit_details = MagicMock(
+            return_value=("Title", "Body")
+        )
+        self.automator._create_and_push_branch_for_commit = MagicMock(
+            return_value="test/branch"
+        )
         self.github_api.create_pr = MagicMock(
             return_value="https://github.com/test/repo/pull/1"
         )

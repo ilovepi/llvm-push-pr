@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """A script to automate the creation and landing of a stack of Pull Requests."""
 
-
-class LlvmPrError(Exception):
-    """Custom exception for errors in the PR automator script."""
-
-
 import argparse
 import json
 import os
@@ -15,14 +10,34 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
 from typing import List, Optional
 from http.client import HTTPResponse
+from dataclasses import dataclass
 
 
 # TODO(user): When submitting upstream, change this to "llvm/llvm-project".
 REPO_SLUG = "ilovepi/llvm-push-pr"
 
 LLVM_GITHUB_TOKEN_VAR = "LLVM_GITHUB_TOKEN"
+
+
+class LlvmPrError(Exception):
+    """Custom exception for errors in the PR automator script."""
+
+
+@dataclass
+class PRAutomatorConfig:
+    """Configuration for the PR automator."""
+
+    user_login: str
+    token: str
+    base_branch: str
+    upstream_remote: str
+    prefix: str
+    draft: bool
+    no_merge: bool
+    auto_merge: bool
 
 
 class CommandRunner:
@@ -303,25 +318,11 @@ class LLVMPRAutomator:
         self,
         runner: CommandRunner,
         github_api: "GitHubAPI",
-        user_login: str,
-        token: str,
-        base_branch: str,
-        upstream_remote: str,
-        prefix: str,
-        draft: bool,
-        no_merge: bool,
-        auto_merge: bool,
+        config: "PRAutomatorConfig",
     ):
         self.runner = runner
         self.github_api = github_api
-        self.user_login = user_login
-        self.token = token
-        self.base_branch = base_branch
-        self.upstream_remote = upstream_remote
-        self.prefix = prefix
-        self.draft = draft
-        self.no_merge = no_merge
-        self.auto_merge = auto_merge
+        self.config = config
         self.original_branch: str = ""
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
@@ -355,18 +356,18 @@ class LLVMPRAutomator:
     def _rebase_current_branch(self) -> None:
         self._check_work_tree()
 
-        target = f"{self.upstream_remote}/{self.base_branch}"
+        target = f"{self.config.upstream_remote}/{self.config.base_branch}"
         self.runner.print(
-            f"Fetching from '{self.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
+            f"Fetching from '{self.config.upstream_remote}' and rebasing '{self.original_branch}' on top of '{target}'..."
         )
 
         authenticated_url = self._get_authenticated_remote_url(
-            self.upstream_remote
+            self.config.upstream_remote
         )
         # Use a refspec to explicitly update the local remote-tracking branch (e.g., origin/main)
         # when fetching from an authenticated URL. This ensures that 'git rebase origin/main'
         # operates on the most up-to-date remote state.
-        refspec = f"refs/heads/{self.base_branch}:refs/remotes/{self.upstream_remote}/{self.base_branch}"
+        refspec = f"refs/heads/{self.config.base_branch}:refs/remotes/{self.config.upstream_remote}/{self.config.base_branch}"
         self._run_cmd(["git", "fetch", authenticated_url, refspec])
 
         try:
@@ -412,14 +413,14 @@ class LLVMPRAutomator:
         remote_url = remote_url_result.stdout.strip()
         if remote_url.startswith("git@github.com:"):
             return remote_url.replace(
-                "git@github.com:", f"https://{self.token}@github.com/"
+                "git@github.com:", f"https://{self.config.token}@github.com/"
             )
         if remote_url.startswith("https://github.com/"):
-            return remote_url.replace("https://", f"https://{self.token}@")
+            return remote_url.replace("https://", f"https://{self.config.token}@")
         raise LlvmPrError(f"Unsupported remote URL format: {remote_url}")
 
     def _get_commit_stack(self) -> List[str]:
-        target = f"{self.upstream_remote}/{self.base_branch}"
+        target = f"{self.config.upstream_remote}/{self.config.base_branch}"
         merge_base_result = self._run_cmd(
             ["git", "merge-base", "HEAD", target],
             capture_output=True,
@@ -459,10 +460,10 @@ class LLVMPRAutomator:
 
     def _validate_merge_config(self, num_commits: int) -> None:
         if num_commits > 1:
-            if self.auto_merge:
+            if self.config.auto_merge:
                 raise LlvmPrError("--auto-merge is only supported for a single commit.")
 
-            if self.no_merge:
+            if self.config.no_merge:
                 raise LlvmPrError(
                     "--no-merge is only supported for a single commit. "
                     "For stacks, the script must merge sequentially."
@@ -473,12 +474,12 @@ class LLVMPRAutomator:
     def _create_and_push_branch_for_commit(
         self, commit_hash: str, base_branch_name: str, index: int
     ) -> str:
-        branch_name = f"{self.prefix}{base_branch_name}-{index + 1}"
+        branch_name = f"{self.config.prefix}{base_branch_name}-{index + 1}"
         commit_title, _ = self._get_commit_details(commit_hash)
         self.runner.print(f"Processing commit {commit_hash[:7]}: {commit_title}")
         self.runner.print(f"Pushing commit to temporary branch '{branch_name}'")
 
-        push_url = f"https://{self.token}@github.com/{REPO_SLUG}.git"
+        push_url = f"https://{self.config.token}@github.com/{REPO_SLUG}.git"
         push_command = [
             "git",
             "push",
@@ -499,14 +500,14 @@ class LLVMPRAutomator:
         )
         pr_url = self.github_api.create_pr(
             head_branch=temp_branch,
-            base_branch=self.base_branch,
+            base_branch=self.config.base_branch,
             title=commit_title,
             body=commit_body,
-            draft=self.draft,
+            draft=self.config.draft,
         )
 
-        if not self.no_merge:
-            if self.auto_merge:
+        if not self.config.no_merge:
+            if self.config.auto_merge:
                 self.github_api.enable_auto_merge(pr_url)
             else:
                 merged_branch = self.github_api.merge_pr(pr_url)
@@ -562,7 +563,7 @@ class LLVMPRAutomator:
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
             self.runner.print("Cleaning up temporary remote branches...")
-            delete_url = f"https://{self.token}@github.com/{REPO_SLUG}.git"
+            delete_url = f"https://{self.config.token}@github.com/{REPO_SLUG}.git"
             self._run_cmd(
                 ["git", "push", delete_url, "--delete"] + self.created_branches,
                 check=False,
@@ -674,9 +675,7 @@ def main() -> None:
         args.prefix += "/"
 
     try:
-        automator = LLVMPRAutomator(
-            runner=command_runner,
-            github_api=github_api,
+        config = PRAutomatorConfig(
             user_login=args.login,
             token=token,
             base_branch=args.base,
@@ -685,6 +684,11 @@ def main() -> None:
             draft=args.draft,
             no_merge=args.no_merge,
             auto_merge=args.auto_merge,
+        )
+        automator = LLVMPRAutomator(
+            runner=command_runner,
+            github_api=github_api,
+            config=config,
         )
         automator.run()
     except LlvmPrError as e:
