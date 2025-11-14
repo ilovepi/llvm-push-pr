@@ -322,7 +322,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         # Create fresh mocks for the dependencies for each test.
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
-        
+
         # Create a standard config object.
         self.config = PRAutomatorConfig(
             user_login="test_user",
@@ -334,7 +334,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             no_merge=False,
             auto_merge=False,
         )
-        
+
         # Instantiate the real LLVMPRAutomator with mocked dependencies.
         self.automator = LLVMPRAutomator(
             runner=self.mock_command_runner,
@@ -342,7 +342,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        
+
         # Set a default original branch for convenience.
         self.automator.original_branch = "feature-branch"
 
@@ -400,9 +400,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             "https://github.com/test/repo/pull/1"
         )
         self.automator.run()
-        mock_create_branch.assert_called_once_with(
-            "commit1", "feature-title", 0
-        )
+        mock_create_branch.assert_called_once_with("commit1", "feature-title", 0)
 
     def test_get_commit_details_no_body(self):
         """Test that _get_commit_details handles commits with no body."""
@@ -449,27 +447,39 @@ class TestLLVMPRAutomator(unittest.TestCase):
             # This test is now redundant due to the refactoring of the setUp method and
             # the more comprehensive test_rebase_current_branch_conflict.
             pass
-    @patch.object(LLVMPRAutomator, '_check_work_tree', return_value=None)
+
+    @patch.object(LLVMPRAutomator, "_check_work_tree", return_value=None)
     def test_rebase_current_branch_conflict(self, mock_check_work_tree):
         """Test that _rebase_current_branch exits on rebase conflict."""
         self.mock_command_runner.run_command.side_effect = [
             subprocess.CompletedProcess([], 0, stdout=b""),  # git fetch
-            subprocess.CalledProcessError(1, "cmd"),         # git rebase
-            subprocess.CompletedProcess([], 0, stdout=""),    # git status
+            subprocess.CalledProcessError(1, "cmd"),  # git rebase
+            subprocess.CompletedProcess([], 0, stdout=""),  # git status
             subprocess.CompletedProcess([], 0, stdout=b""),  # git rebase --abort
         ]
 
         with self.assertRaises(LlvmPrError):
             self.automator._rebase_current_branch()
 
-        self.mock_command_runner.run_command.assert_has_calls([
-            call(['git', 'fetch', 'upstream', 'main'], read_only=False, env=ANY),
-            call(['git', 'rebase', 'upstream/main'], read_only=False, env=ANY),
-            call(['git', 'status', '--verify-status=REBASE_HEAD'], check=False, capture_output=True, text=True, read_only=True, env=ANY),
-            call(['git', 'rebase', '--abort'], check=False, read_only=False, env=ANY),
-        ])
+        self.mock_command_runner.run_command.assert_has_calls(
+            [
+                call(["git", "fetch", "upstream", "main"], read_only=False, env=ANY),
+                call(["git", "rebase", "upstream/main"], read_only=False, env=ANY),
+                call(
+                    ["git", "status", "--verify-status=REBASE_HEAD"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    read_only=True,
+                    env=ANY,
+                ),
+                call(
+                    ["git", "rebase", "--abort"], check=False, read_only=False, env=ANY
+                ),
+            ]
+        )
 
-    @patch.object(LLVMPRAutomator, '_check_work_tree')
+    @patch.object(LLVMPRAutomator, "_check_work_tree")
     def test_check_work_tree_is_clean_dirty(self, mock_check_work_tree):
         """Test that _check_work_tree_is_clean exits if the work tree is dirty."""
         mock_check_work_tree.side_effect = LlvmPrError("dirty")
@@ -651,9 +661,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
         self.automator.run()
 
-        mock_create_branch.assert_called_once_with(
-            "commit1", "feature-branch", 0
-        )
+        mock_create_branch.assert_called_once_with("commit1", "feature-branch", 0)
         self.mock_github_api.create_pr.assert_called_once_with(
             head_branch="test_user:test/feature-branch-1",
             base_branch="main",
@@ -672,7 +680,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
     @patch.object(LLVMPRAutomator, "_get_commit_stack", return_value=[])
     @patch.object(LLVMPRAutomator, "_cleanup")
     @patch.object(LLVMPRAutomator, "_check_work_tree", return_value=None)
-    def test_run_no_new_commits(self, mock_check_work_tree, mock_cleanup, mock_get_stack):
+    def test_run_no_new_commits(
+        self, mock_check_work_tree, mock_cleanup, mock_get_stack
+    ):
         """Test that the script exits gracefully when there are no new commits."""
         self.automator.run()
 
@@ -696,7 +706,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
     def test_cleanup_no_branches(self):
         """Test that _cleanup does not try to delete branches if none were created."""
         self.automator.created_branches = []
-        
+
         self.automator._cleanup()
 
         self.mock_command_runner.run_command.assert_called_once_with(
