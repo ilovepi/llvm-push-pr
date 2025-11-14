@@ -151,11 +151,7 @@ class GitHubAPI:
     ) -> dict:
         with self._request(method, endpoint, json_payload) as response:
             # expect a 200 'OK' or 201 'Created' status on success and JSON body.
-            if response.status not in [200, 201]:
-                self.runner.print(
-                    f"Warning: Expected status 200 or 201, but got {response.status}",
-                    file=sys.stderr,
-                )
+            self._log_unexpected_status([200, 201], response.status)
 
             response_text = response.read().decode("utf-8")
             if response_text:
@@ -168,11 +164,16 @@ class GitHubAPI:
         with self._request(method, endpoint, json_payload) as response:
             # expected a 204 No Content status on success,
             # indicating the operation was successful but there is no body.
-            if response.status != 204:
-                self.runner.print(
-                    f"Warning: Expected status 204, but got {response.status}",
-                    file=sys.stderr,
-                )
+            self._log_unexpected_status([204], response.status)
+
+    def _log_unexpected_status(
+        self, expected_statuses: List[int], actual_status: int
+    ) -> None:
+        if actual_status not in expected_statuses:
+            self.runner.print(
+                f"Warning: Expected status {', '.join(map(str, expected_statuses))}, but got {actual_status}",
+                file=sys.stderr,
+            )
 
     def get_user_login(self) -> str:
         return self._request_and_parse_json("GET", "/user")["login"]
