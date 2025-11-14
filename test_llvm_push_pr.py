@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, ANY
 import io
 import argparse
 import subprocess
@@ -84,6 +84,12 @@ class TestMain(unittest.TestCase):
 
         main()
         mock_automator.return_value.run.assert_called_once()
+        mock_automator.assert_called_once_with(
+            runner=mock_command_runner_class.return_value,
+            github_api=mock_github_api.return_value,
+            config=ANY,
+            remote="origin",
+        )
 
 
 class TestCheckPrerequisites(unittest.TestCase):
@@ -325,17 +331,20 @@ class TestLLVMPRAutomator(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.mock_github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
         self.automator._get_current_branch = MagicMock(return_value="feature-branch")
+        self.automator._check_work_tree = MagicMock()
         self.automator._get_commit_stack = MagicMock()
         self.automator._get_commit_details = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._create_and_push_branch_for_commit = MagicMock()
         self.automator._cleanup = MagicMock()
+        self.automator._get_authenticated_remote_url = MagicMock()
 
     def test_get_current_branch_empty(self):
         """Test that _get_current_branch handles empty git rev-parse output."""
@@ -398,22 +407,21 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._create_and_push_branch_for_commit
         self.automator._get_commit_details.return_value = ("", "")
         self.automator._run_cmd = MagicMock()
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/test_remote.git"
+        )
 
         branch_name = self.automator._create_and_push_branch_for_commit(
             "commit1", "base-branch", 0
         )
 
         self.assertEqual(branch_name, "test/base-branch-1")
-        self.automator._run_cmd.assert_has_calls(
+        self.automator._run_cmd.assert_called_once_with(
             [
-                call(
-                    [
-                        "git",
-                        "push",
-                        "https://test_token@github.com/ilovepi/llvm-push-pr.git",
-                        "commit1:refs/heads/test/base-branch-1",
-                    ]
-                ),
+                "git",
+                "push",
+                "https://test_token@github.com/test_remote.git",
+                "commit1:refs/heads/test/base-branch-1",
             ]
         )
 
@@ -421,16 +429,13 @@ class TestLLVMPRAutomator(unittest.TestCase):
         """Test that _rebase_current_branch exits on rebase conflict when no rebase is in progress."""
         # Un-mock the method for this test
         del self.automator._rebase_current_branch
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/upstream/repo.git"
+        )
         self.automator._run_cmd.side_effect = [
-            subprocess.CompletedProcess([], 0, ""),  # git status
-            subprocess.CompletedProcess(
-                [], 0, "git@github.com:upstream/repo.git"
-            ),  # git remote get-url
             subprocess.CompletedProcess([], 0, ""),  # git fetch
             subprocess.CalledProcessError(1, "cmd"),  # git rebase
-            subprocess.CompletedProcess(
-                [], 1, ""
-            ),  # git status (in except block, no rebase in progress)
+            subprocess.CompletedProcess([], 1, ""),  # git status --verify-status=REBASE_HEAD (no rebase in progress)
         ]
         with self.assertRaises(LlvmPrError):
             self.automator._rebase_current_branch()
@@ -452,14 +457,13 @@ class TestLLVMPRAutomator(unittest.TestCase):
         """Test that _rebase_current_branch exits on rebase conflict."""
         # Un-mock the method for this test
         del self.automator._rebase_current_branch
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/upstream/repo.git"
+        )
         self.automator._run_cmd.side_effect = [
-            subprocess.CompletedProcess([], 0, ""),  # git status
-            subprocess.CompletedProcess(
-                [], 0, "git@github.com:upstream/repo.git"
-            ),  # git remote get-url
             subprocess.CompletedProcess([], 0, ""),  # git fetch
             subprocess.CalledProcessError(1, "cmd"),  # git rebase
-            subprocess.CompletedProcess([], 0, ""),  # git status (in except block)
+            subprocess.CompletedProcess([], 0, ""),  # git status --verify-status=REBASE_HEAD (rebase in progress)
             subprocess.CompletedProcess([], 0, ""),  # git rebase --abort
         ]
         with self.assertRaises(LlvmPrError):
@@ -480,6 +484,8 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_check_work_tree_is_clean_dirty(self):
         """Test that _check_work_tree_is_clean exits if the work tree is dirty."""
+        # Un-mock the method for this test
+        del self.automator._check_work_tree
         self.automator._run_cmd.return_value = subprocess.CompletedProcess(
             [], 0, "M some_file"
         )
@@ -494,6 +500,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.mock_github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
@@ -508,7 +515,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator.run()
 
         self.mock_github_api.create_pr.assert_called_once_with(
-            head_branch="test/feature-branch-1",
+            head_branch="test_user:test/feature-branch-1",
             base_branch="main",
             title="Commit 1 Title",
             body="Commit 1 Body",
@@ -536,6 +543,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.mock_github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
@@ -556,6 +564,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_run_multiple_commits(self):
         """Test the script with a stack of multiple commits."""
+        self.automator.original_branch = "feature-branch"
+        self.automator._run_cmd = MagicMock()
+        self.automator._get_current_branch.return_value = "feature-branch"
         self.automator._get_commit_stack.side_effect = [
             ["commit1", "commit2"],  # initial_commits
             ["commit1", "commit2"],  # commits for i=0
@@ -578,11 +589,13 @@ class TestLLVMPRAutomator(unittest.TestCase):
             "test/feature-branch-1",
             "test/feature-branch-2",
         ]
-        self.mock_github_api.delete_branch = MagicMock()
         self.automator.repo_settings = {"delete_branch_on_merge": False}
-        self.mock_github_api.get_repo_settings = MagicMock(
-            return_value={"delete_branch_on_merge": False}
+        self.mock_github_api.get_repo_settings.return_value = {"delete_branch_on_merge": False}
+        # Mock _get_authenticated_remote_url for the delete calls
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/test_remote.git"
         )
+        self.automator._check_work_tree.return_value = None # Ensure clean work tree
 
         self.automator.run()
 
@@ -592,7 +605,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
         )
         self.assertEqual(self.mock_github_api.create_pr.call_count, 2)
         self.assertEqual(self.mock_github_api.merge_pr.call_count, 2)
-        self.assertEqual(self.mock_github_api.delete_branch.call_count, 2)
 
         # Verify the calls were made in the correct order
         self.automator._create_and_push_branch_for_commit.assert_has_calls(
@@ -604,14 +616,14 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_github_api.create_pr.assert_has_calls(
             [
                 call(
-                    head_branch="test/feature-branch-1",
+                    head_branch="test_user:test/feature-branch-1",
                     base_branch="main",
                     title="Commit 1 Title",
                     body="Commit 1 Body",
                     draft=False,
                 ),
                 call(
-                    head_branch="test/feature-branch-2",
+                    head_branch="test_user:test/feature-branch-2",
                     base_branch="main",
                     title="Commit 2 Title",
                     body="Commit 2 Body",
@@ -625,16 +637,39 @@ class TestLLVMPRAutomator(unittest.TestCase):
                 call("https://github.com/test/repo/pull/2"),
             ]
         )
-        self.mock_github_api.delete_branch.assert_has_calls(
+        # Assert _run_cmd for branch deletion
+        self.automator._run_cmd.assert_has_calls(
             [
-                call("test/feature-branch-1", None),
-                call("test/feature-branch-2", None),
-            ]
+                call(
+                    [
+                        "git",
+                        "push",
+                        "https://test_token@github.com/test_remote.git",
+                        "--delete",
+                        "test/feature-branch-1",
+                    ],
+                    check=False,
+                ),
+                call(
+                    [
+                        "git",
+                        "push",
+                        "https://test_token@github.com/test_remote.git",
+                        "--delete",
+                        "test/feature-branch-2",
+                    ],
+                    check=False,
+                ),
+            ],
+            any_order=True,
         )
         self.automator._cleanup.assert_called_once()
 
     def test_run_single_commit(self):
         """Test the script with a single commit."""
+        self.automator.original_branch = "feature-branch"
+        self.automator._run_cmd = MagicMock()
+        self.automator._get_current_branch.return_value = "feature-branch"
         self.automator._get_commit_stack.return_value = ["commit1"]
         self.automator._get_commit_details.return_value = (
             "Commit 1 Title",
@@ -646,13 +681,20 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_github_api.create_pr.return_value = (
             "https://github.com/test/repo/pull/1"
         )
+        self.mock_github_api.merge_pr.return_value = "test/feature-branch-1"
+        self.automator.repo_settings = {"delete_branch_on_merge": False}
+        self.mock_github_api.get_repo_settings.return_value = {"delete_branch_on_merge": False}
+        self.automator._get_authenticated_remote_url.return_value = (
+            "https://test_token@github.com/test_remote.git"
+        )
+        self.automator._check_work_tree.return_value = None # Ensure clean work tree
 
         self.automator.run()
         self.automator._create_and_push_branch_for_commit.assert_called_once_with(
             "commit1", "feature-branch", 0
         )
         self.mock_github_api.create_pr.assert_called_once_with(
-            head_branch="test/feature-branch-1",
+            head_branch="test_user:test/feature-branch-1",
             base_branch="main",
             title="Commit 1 Title",
             body="Commit 1 Body",
@@ -660,6 +702,16 @@ class TestLLVMPRAutomator(unittest.TestCase):
         )
         self.mock_github_api.merge_pr.assert_called_once_with(
             "https://github.com/test/repo/pull/1"
+        )
+        self.automator._run_cmd.assert_called_once_with(
+            [
+                "git",
+                "push",
+                "https://test_token@github.com/test_remote.git",
+                "--delete",
+                "test/feature-branch-1",
+            ],
+            check=False,
         )
         self.automator._cleanup.assert_called_once()
 
@@ -679,6 +731,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._cleanup
         self.automator.created_branches = ["branch1", "branch2"]
         self.automator._run_cmd = MagicMock()
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/test_remote.git"
+        )
 
         self.automator._cleanup()
 
@@ -689,7 +744,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
                     [
                         "git",
                         "push",
-                        "https://test_token@github.com/ilovepi/llvm-push-pr.git",
+                        "https://test_token@github.com/test_remote.git",
                         "--delete",
                         "branch1",
                         "branch2",
@@ -726,6 +781,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.mock_github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator._get_commit_details = MagicMock(
             return_value=("Commit Title", "Commit Body")
@@ -743,6 +799,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.mock_github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator._get_commit_details = MagicMock(
             return_value=("Commit Title", "Commit Body")
@@ -779,6 +836,7 @@ class TestNewFeatures(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
@@ -824,6 +882,7 @@ class TestNewFeatures(unittest.TestCase):
             runner=self.mock_command_runner,
             github_api=self.github_api,
             config=self.config,
+            remote="test_remote",
         )
         self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
@@ -850,9 +909,18 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_run_avoids_deleting_branch_when_repo_auto_deletes(self):
         """Test that run does not delete branch if repo is set to auto-delete."""
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = ("Title", "Body")
-        self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.github_api,
+            config=self.config,
+            remote="test_remote",
+        )
+        self.automator._run_cmd = MagicMock()
+        self.automator._rebase_current_branch = MagicMock()
+        self.automator._get_current_branch = MagicMock(return_value="feature-branch")
+        self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
+        self.automator._get_commit_details = MagicMock(return_value=("Title", "Body"))
+        self.automator._create_and_push_branch_for_commit = MagicMock(return_value="test/branch")
         self.github_api.create_pr = MagicMock(
             return_value="https://github.com/test/repo/pull/1"
         )
@@ -860,6 +928,9 @@ class TestNewFeatures(unittest.TestCase):
         self.github_api.delete_branch = MagicMock()
         self.github_api.get_repo_settings = MagicMock(
             return_value={"delete_branch_on_merge": True, "default_branch": "main"}
+        )
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/test_remote.git"
         )
 
         self.automator.run()
@@ -869,19 +940,46 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_run_deletes_branch_when_repo_does_not_auto_delete(self):
         """Test that run deletes branch if repo is not set to auto-delete."""
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = ("Title", "Body")
-        self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.github_api,
+            config=self.config,
+            remote="test_remote",
+        )
+        self.automator._run_cmd = MagicMock()
+        self.automator._rebase_current_branch = MagicMock()
+        self.automator._get_current_branch = MagicMock(return_value="feature-branch")
+        self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
+        self.automator._get_commit_details = MagicMock(return_value=("Title", "Body"))
+        self.automator._create_and_push_branch_for_commit = MagicMock(return_value="test/branch")
         self.github_api.create_pr = MagicMock(
             return_value="https://github.com/test/repo/pull/1"
         )
         self.github_api.merge_pr = MagicMock(return_value="test/branch")
-        self.github_api.delete_branch = MagicMock()
+        self.automator.repo_settings = {"delete_branch_on_merge": False}
         self.github_api.get_repo_settings = MagicMock(
             return_value={"delete_branch_on_merge": False, "default_branch": "main"}
+        )
+        self.automator._get_authenticated_remote_url = MagicMock(
+            return_value="https://test_token@github.com/test_remote.git"
         )
 
         self.automator.run()
 
         self.github_api.merge_pr.assert_called_once()
-        self.github_api.delete_branch.assert_called_once_with("test/branch", "main")
+        self.automator._run_cmd.assert_has_calls(
+            [
+                call(
+                    [
+                        "git",
+                        "push",
+                        "https://test_token@github.com/test_remote.git",
+                        "--delete",
+                        "test/branch",
+                    ],
+                    check=False,
+                ),
+                call(["git", "checkout", "feature-branch"], capture_output=True),
+            ],
+            any_order=True,
+        )
