@@ -440,8 +440,7 @@ class LLVMPRAutomator:
             text=True,
             read_only=True,
         )
-        commits = result.stdout.strip().split("\n")
-        return [c for c in commits if c]
+        return result.stdout.strip().splitlines()
 
     def _get_commit_details(self, commit_hash: str) -> tuple[str, str]:
         result = self._run_cmd(
@@ -541,10 +540,12 @@ class LLVMPRAutomator:
                 return
 
             self._validate_merge_config(len(commits))
-            branch_base_name = self.original_branch
-            if self.original_branch == "main":
-                first_commit_title, _ = self._get_commit_details(commits[0])
-                branch_base_name = self._sanitize_branch_name(first_commit_title)
+            first_commit_title, _ = self._get_commit_details(commits[0])
+            branch_base_name = (
+                self._sanitize_branch_name(first_commit_title)
+                if self.original_branch == "main"
+                else self.original_branch
+            )
 
             for i in range(len(commits)):
                 if i > 0:
@@ -674,7 +675,7 @@ def main() -> None:
     if not args.prefix:
         args.prefix = f"users/{args.login}/"
 
-    if args.prefix and not args.prefix.endswith("/"):
+    if not args.prefix.endswith("/"):
         args.prefix += "/"
 
     try:
