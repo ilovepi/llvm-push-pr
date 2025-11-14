@@ -420,9 +420,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         """Test that _create_and_push_branch_for_commit handles empty commit title."""
         self.mock_command_runner.run_command.side_effect = [
             # Result for _get_https_url_for_remote
-            subprocess.CompletedProcess(
-                [], 0, stdout="git@github.com:test/repo.git"
-            ),
+            subprocess.CompletedProcess([], 0, stdout="git@github.com:test/repo.git"),
             # Result for the git push command
             subprocess.CompletedProcess([], 0, stdout=b""),
         ]
@@ -466,7 +464,9 @@ class TestLLVMPRAutomator(unittest.TestCase):
         """Test that _rebase_current_branch exits on rebase conflict."""
         self.mock_command_runner.run_command.side_effect = [
             # 1. Result for _get_https_url_for_remote
-            subprocess.CompletedProcess([], 0, stdout="git@github.com:llvm/llvm-project.git"),
+            subprocess.CompletedProcess(
+                [], 0, stdout="git@github.com:llvm/llvm-project.git"
+            ),
             # 2. Result for git fetch
             subprocess.CompletedProcess([], 0, stdout=b""),
             # 3. Result for git rebase (failure)
@@ -490,7 +490,12 @@ class TestLLVMPRAutomator(unittest.TestCase):
                     read_only=True,
                 ),
                 call(
-                    ["git", "fetch", "https://github.com/llvm/llvm-project.git", "refs/heads/main:refs/remotes/upstream/main"],
+                    [
+                        "git",
+                        "fetch",
+                        "https://github.com/llvm/llvm-project.git",
+                        "refs/heads/main:refs/remotes/upstream/main",
+                    ],
                     read_only=False,
                     env=ANY,
                 ),
