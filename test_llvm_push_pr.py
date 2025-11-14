@@ -170,16 +170,18 @@ class TestGitHubAPI(unittest.TestCase):
 
         self.mock_command_runner.verbose = True
         self.github_api.delete_branch("already-deleted-branch")
-        expected_calls = [
+        self.mock_command_runner.verbose_print.assert_has_calls([
             call(
                 "API Request: DELETE https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch"
             ),
             call(
-                "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: HTTP Error 422: Reference does not exist",
+                "Error response body: Reference does not exist",
                 file=sys.stderr,
             ),
+        ])
+        expected_calls = [
             call(
-                "Error response body: Reference does not exist",
+                "Error making API request to https://api.github.com/repos/ilovepi/llvm-push-pr/git/refs/heads/already-deleted-branch: HTTP Error 422: Reference does not exist",
                 file=sys.stderr,
             ),
             call(

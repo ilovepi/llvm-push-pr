@@ -73,8 +73,7 @@ class CommandRunner:
             self.print(f"[Dry Run] Would run: {' '.join(command)}")
             return subprocess.CompletedProcess(command, 0, "", "")
 
-        if self.verbose:
-            self.print(f"Running: {' '.join(command)}")
+        self.verbose_print(f"Running: {' '.join(command)}")
 
         try:
             return subprocess.run(
@@ -117,10 +116,9 @@ class GitHubAPI:
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
     ) -> HTTPResponse:
         url = f"{self.BASE_URL}{endpoint}"
-        if self.runner.verbose:
-            self.runner.print(f"API Request: {method.upper()} {url}")
-            if json_payload:
-                self.runner.print(f"Payload: {json_payload}")
+        self.runner.verbose_print(f"API Request: {method.upper()} {url}")
+        if json_payload:
+            self.runner.verbose_print(f"Payload: {json_payload}")
 
         data = None
         headers = self.headers.copy()
@@ -138,12 +136,9 @@ class GitHubAPI:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
             )
-            if self.runner.verbose:
-                error_body = e.read().decode()
-                if error_body:
-                    self.runner.print(
-                        f"Error response body: {error_body}", file=sys.stderr
-                    )
+            self.runner.verbose_print(
+                f"Error response body: {e.read().decode()}", file=sys.stderr
+            )
             raise e
 
     def _request_and_parse_json(
