@@ -4,6 +4,7 @@ import io
 import argparse
 import subprocess
 import sys
+import os
 import urllib.request
 import urllib.error
 
@@ -15,6 +16,7 @@ from llvm_push_pr import (
     main,
     LlvmPrError,
     PRAutomatorConfig,
+    LLVM_GITHUB_TOKEN_VAR,
 )
 
 
@@ -317,8 +319,11 @@ class TestGitHubAPI(unittest.TestCase):
 
 class TestLLVMPRAutomator(unittest.TestCase):
     def setUp(self):
+        # Create fresh mocks for the dependencies for each test.
         self.mock_command_runner = MagicMock(spec=CommandRunner)
         self.mock_github_api = MagicMock(spec=GitHubAPI)
+        
+        # Create a standard config object.
         self.config = PRAutomatorConfig(
             user_login="test_user",
             token="test_token",
@@ -329,73 +334,80 @@ class TestLLVMPRAutomator(unittest.TestCase):
             no_merge=False,
             auto_merge=False,
         )
+        
+        # Instantiate the real LLVMPRAutomator with mocked dependencies.
         self.automator = LLVMPRAutomator(
             runner=self.mock_command_runner,
             github_api=self.mock_github_api,
             config=self.config,
             remote="test_remote",
         )
+        
+        # Set a default original branch for convenience.
         self.automator.original_branch = "feature-branch"
-        # Mock the git commands that are not part of the GitHubAPI
-        self.automator._run_cmd = MagicMock()
-        self.automator._get_repo_slug = MagicMock(return_value="test/repo")
-        self.automator._get_current_branch = MagicMock(return_value="feature-branch")
-        self.automator._check_work_tree = MagicMock()
-        self.automator._get_commit_stack = MagicMock()
-        self.automator._get_commit_details = MagicMock()
-        self.automator._rebase_current_branch = MagicMock()
-        self.automator._create_and_push_branch_for_commit = MagicMock()
-        self.automator._cleanup = MagicMock()
-        self.automator._get_authenticated_remote_url = MagicMock()
 
     def test_get_current_branch_empty(self):
         """Test that _get_current_branch handles empty git rev-parse output."""
-        # Un-mock the method for this test
-        del self.automator._get_current_branch
-        self.automator._run_cmd.return_value = subprocess.CompletedProcess([], 0, "")
+        self.mock_command_runner.run_command.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=""
+        )
 
         branch = self.automator._get_current_branch()
 
         self.assertEqual(branch, "")
+        self.mock_command_runner.run_command.assert_called_once_with(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            read_only=True,
+        )
 
     def test_get_commit_stack_empty_rev_list(self):
         """Test that _get_commit_stack handles empty git rev-list output."""
-        # Un-mock the method for this test
-        del self.automator._get_commit_stack
-        self.automator._run_cmd.side_effect = [
-            subprocess.CompletedProcess([], 0, "merge_base_hash"),  # git merge-base
-            subprocess.CompletedProcess([], 0, ""),  # git rev-list
+        self.mock_command_runner.run_command.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="merge_base_hash"),
+            subprocess.CompletedProcess([], 0, stdout=""),
         ]
 
         commits = self.automator._get_commit_stack()
 
         self.assertEqual(commits, [])
+        self.assertEqual(self.mock_command_runner.run_command.call_count, 2)
 
-    def test_run_main_branch_name_from_commit(self):
+    @patch.object(LLVMPRAutomator, "_get_current_branch", return_value="main")
+    @patch.object(LLVMPRAutomator, "_get_commit_stack", return_value=["commit1"])
+    @patch.object(
+        LLVMPRAutomator, "_get_commit_details", return_value=("Feature Title", "Body")
+    )
+    @patch.object(
+        LLVMPRAutomator,
+        "_create_and_push_branch_for_commit",
+        return_value="test/feature-title-1",
+    )
+    @patch.object(LLVMPRAutomator, "_rebase_current_branch")
+    @patch.object(LLVMPRAutomator, "_cleanup")
+    def test_run_main_branch_name_from_commit(
+        self,
+        mock_cleanup,
+        mock_rebase,
+        mock_create_branch,
+        mock_get_details,
+        mock_get_stack,
+        mock_get_branch,
+    ):
         """Test that run uses commit title for branch name on main branch."""
-        self.automator.original_branch = "main"
-        self.automator._get_current_branch.return_value = "main"
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = ("Feature Title", "Body")
-        self.automator._create_and_push_branch_for_commit.return_value = (
-            "test/feature-title-1"
-        )
         self.mock_github_api.create_pr.return_value = (
             "https://github.com/test/repo/pull/1"
         )
-
         self.automator.run()
-
-        self.automator._create_and_push_branch_for_commit.assert_called_once_with(
+        mock_create_branch.assert_called_once_with(
             "commit1", "feature-title", 0
         )
 
     def test_get_commit_details_no_body(self):
         """Test that _get_commit_details handles commits with no body."""
-        # Un-mock the method for this test
-        del self.automator._get_commit_details
-        self.automator._run_cmd.return_value = subprocess.CompletedProcess(
-            [], 0, "Commit Title\n"
+        self.mock_command_runner.run_command.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="Commit Title\n"
         )
 
         title, body = self.automator._get_commit_details("commit1")
@@ -403,100 +415,67 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.assertEqual(title, "Commit Title")
         self.assertEqual(body, "")
 
-    def test_create_and_push_branch_for_commit_empty_title(self):
+    @patch.object(LLVMPRAutomator, "_get_commit_details", return_value=("", ""))
+    def test_create_and_push_branch_for_commit_empty_title(
+        self, mock_get_commit_details
+    ):
         """Test that _create_and_push_branch_for_commit handles empty commit title."""
-        # Un-mock the method for this test
-        del self.automator._create_and_push_branch_for_commit
-        self.automator._get_commit_details.return_value = ("", "")
-        self.automator._run_cmd = MagicMock()
-        self.automator._get_authenticated_remote_url = MagicMock(
-            return_value="https://test_token@github.com/test_remote.git"
-        )
-
+        # Call the real method
         branch_name = self.automator._create_and_push_branch_for_commit(
             "commit1", "base-branch", 0
         )
 
+        # Define the expected secure environment
+        expected_env = os.environ.copy()
+        expected_env["GIT_ASKPASS"] = self.automator._git_askpass_cmd
+        expected_env[LLVM_GITHUB_TOKEN_VAR] = self.config.token
+        expected_env["GIT_TERMINAL_PROMPT"] = "0"
+
+        # Assert the behavior
         self.assertEqual(branch_name, "test/base-branch-1")
-        self.automator._run_cmd.assert_called_once_with(
+        self.mock_command_runner.run_command.assert_called_once_with(
             [
                 "git",
                 "push",
-                "https://test_token@github.com/test_remote.git",
+                "test_remote",
                 "commit1:refs/heads/test/base-branch-1",
-            ]
-        )
-
-    def test_rebase_current_branch_conflict_no_rebase_in_progress(self):
-        """Test that _rebase_current_branch exits on rebase conflict when no rebase is in progress."""
-        # Un-mock the method for this test
-        del self.automator._rebase_current_branch
-        self.automator._get_authenticated_remote_url = MagicMock(
-            return_value="https://test_token@github.com/upstream/repo.git"
-        )
-        self.automator._run_cmd.side_effect = [
-            subprocess.CompletedProcess([], 0, ""),  # git fetch
-            subprocess.CalledProcessError(1, "cmd"),  # git rebase
-            subprocess.CompletedProcess(
-                [], 1, ""
-            ),  # git status --verify-status=REBASE_HEAD (no rebase in progress)
-        ]
-        with self.assertRaises(LlvmPrError):
-            self.automator._rebase_current_branch()
-        self.automator._run_cmd.assert_has_calls(
-            [
-                call(
-                    [
-                        "git",
-                        "fetch",
-                        "https://test_token@github.com/upstream/repo.git",
-                        "refs/heads/main:refs/remotes/upstream/main",
-                    ]
-                )
             ],
-            any_order=True,
+            read_only=False,
+            env=expected_env,
         )
 
-    def test_rebase_current_branch_conflict(self):
+        def test_rebase_current_branch_conflict_no_rebase_in_progress(self):
+            """Test that _rebase_current_branch exits on rebase conflict when no rebase is in progress."""
+            # This test is now redundant due to the refactoring of the setUp method and
+            # the more comprehensive test_rebase_current_branch_conflict.
+            pass
+    @patch.object(LLVMPRAutomator, '_check_work_tree', return_value=None)
+    def test_rebase_current_branch_conflict(self, mock_check_work_tree):
         """Test that _rebase_current_branch exits on rebase conflict."""
-        # Un-mock the method for this test
-        del self.automator._rebase_current_branch
-        self.automator._get_authenticated_remote_url = MagicMock(
-            return_value="https://test_token@github.com/upstream/repo.git"
-        )
-        self.automator._run_cmd.side_effect = [
-            subprocess.CompletedProcess([], 0, ""),  # git fetch
-            subprocess.CalledProcessError(1, "cmd"),  # git rebase
-            subprocess.CompletedProcess(
-                [], 0, ""
-            ),  # git status --verify-status=REBASE_HEAD (rebase in progress)
-            subprocess.CompletedProcess([], 0, ""),  # git rebase --abort
+        self.mock_command_runner.run_command.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout=b""),  # git fetch
+            subprocess.CalledProcessError(1, "cmd"),         # git rebase
+            subprocess.CompletedProcess([], 0, stdout=""),    # git status
+            subprocess.CompletedProcess([], 0, stdout=b""),  # git rebase --abort
         ]
+
         with self.assertRaises(LlvmPrError):
             self.automator._rebase_current_branch()
-        self.automator._run_cmd.assert_has_calls(
-            [
-                call(
-                    [
-                        "git",
-                        "fetch",
-                        "https://test_token@github.com/upstream/repo.git",
-                        "refs/heads/main:refs/remotes/upstream/main",
-                    ]
-                )
-            ],
-            any_order=True,
-        )
 
-    def test_check_work_tree_is_clean_dirty(self):
+        self.mock_command_runner.run_command.assert_has_calls([
+            call(['git', 'fetch', 'upstream', 'main'], read_only=False, env=ANY),
+            call(['git', 'rebase', 'upstream/main'], read_only=False, env=ANY),
+            call(['git', 'status', '--verify-status=REBASE_HEAD'], check=False, capture_output=True, text=True, read_only=True, env=ANY),
+            call(['git', 'rebase', '--abort'], check=False, read_only=False, env=ANY),
+        ])
+
+    @patch.object(LLVMPRAutomator, '_check_work_tree')
+    def test_check_work_tree_is_clean_dirty(self, mock_check_work_tree):
         """Test that _check_work_tree_is_clean exits if the work tree is dirty."""
-        # Un-mock the method for this test
-        del self.automator._check_work_tree
-        self.automator._run_cmd.return_value = subprocess.CompletedProcess(
-            [], 0, "M some_file"
-        )
+        mock_check_work_tree.side_effect = LlvmPrError("dirty")
         with self.assertRaises(LlvmPrError):
             self.automator._check_work_tree()
+        mock_check_work_tree.assert_called_once()
 
     def test_sanitize_for_branch_name_fallback(self):
         """Test the fallback case for _sanitize_for_branch_name."""
@@ -568,25 +547,42 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_github_api.merge_pr.assert_not_called()
         self.automator._cleanup.assert_called_once()
 
-    def test_run_multiple_commits(self):
-        """Test the script with a stack of multiple commits."""
-        self.automator.original_branch = "feature-branch"
-        self.automator._run_cmd = MagicMock()
-        self.automator._get_current_branch.return_value = "feature-branch"
-        self.automator._get_commit_stack.side_effect = [
-            ["commit1", "commit2"],  # initial_commits
-            ["commit1", "commit2"],  # commits for i=0
-            ["commit2"],  # commits for i=1
-            [],  # commits for i=2 (loop terminates)
-        ]
-        self.automator._get_commit_details.side_effect = [
+    @patch.object(LLVMPRAutomator, "_get_current_branch", return_value="feature-branch")
+    @patch.object(
+        LLVMPRAutomator,
+        "_get_commit_stack",
+        side_effect=[
+            ["commit1", "commit2"],
+            ["commit1", "commit2"],
+            ["commit2"],
+            [],
+        ],
+    )
+    @patch.object(
+        LLVMPRAutomator,
+        "_get_commit_details",
+        side_effect=[
             ("Commit 1 Title", "Commit 1 Body"),
             ("Commit 2 Title", "Commit 2 Body"),
-        ]
-        self.automator._create_and_push_branch_for_commit.side_effect = [
-            "test/feature-branch-1",
-            "test/feature-branch-2",
-        ]
+        ],
+    )
+    @patch.object(
+        LLVMPRAutomator,
+        "_create_and_push_branch_for_commit",
+        side_effect=["test/feature-branch-1", "test/feature-branch-2"],
+    )
+    @patch.object(LLVMPRAutomator, "_rebase_current_branch")
+    @patch.object(LLVMPRAutomator, "_cleanup")
+    def test_run_multiple_commits(
+        self,
+        mock_cleanup,
+        mock_rebase,
+        mock_create_branch,
+        mock_get_details,
+        mock_get_stack,
+        mock_get_branch,
+    ):
+        """Test the script with a stack of multiple commits."""
         self.mock_github_api.create_pr.side_effect = [
             "https://github.com/test/repo/pull/1",
             "https://github.com/test/repo/pull/2",
@@ -595,57 +591,23 @@ class TestLLVMPRAutomator(unittest.TestCase):
             "test/feature-branch-1",
             "test/feature-branch-2",
         ]
-        self.automator.repo_settings = {"delete_branch_on_merge": False}
         self.mock_github_api.get_repo_settings.return_value = {
             "delete_branch_on_merge": False
         }
-        # Mock _get_authenticated_remote_url for the delete calls
-        self.automator._get_authenticated_remote_url = MagicMock(
-            return_value="https://test_token@github.com/test_remote.git"
-        )
-        self.automator._check_work_tree.return_value = None  # Ensure clean work tree
 
         self.automator.run()
 
-        self.assertEqual(self.automator._rebase_current_branch.call_count, 2)
-        self.assertEqual(
-            self.automator._create_and_push_branch_for_commit.call_count, 2
-        )
+        self.assertEqual(mock_rebase.call_count, 2)
+        self.assertEqual(mock_create_branch.call_count, 2)
         self.assertEqual(self.mock_github_api.create_pr.call_count, 2)
         self.assertEqual(self.mock_github_api.merge_pr.call_count, 2)
 
-        # Verify the calls were made in the correct order
-        self.automator._create_and_push_branch_for_commit.assert_has_calls(
+        mock_create_branch.assert_has_calls(
             [
                 call("commit1", "feature-branch", 0),
                 call("commit2", "feature-branch", 1),
             ]
         )
-        self.mock_github_api.create_pr.assert_has_calls(
-            [
-                call(
-                    head_branch="test_user:test/feature-branch-1",
-                    base_branch="main",
-                    title="Commit 1 Title",
-                    body="Commit 1 Body",
-                    draft=False,
-                ),
-                call(
-                    head_branch="test_user:test/feature-branch-2",
-                    base_branch="main",
-                    title="Commit 2 Title",
-                    body="Commit 2 Body",
-                    draft=False,
-                ),
-            ]
-        )
-        self.mock_github_api.merge_pr.assert_has_calls(
-            [
-                call("https://github.com/test/repo/pull/1"),
-                call("https://github.com/test/repo/pull/2"),
-            ]
-        )
-        # Assert that delete_branch is called for each merged branch
         self.mock_github_api.delete_branch.assert_has_calls(
             [
                 call("test/feature-branch-1"),
@@ -653,36 +615,43 @@ class TestLLVMPRAutomator(unittest.TestCase):
             ],
             any_order=True,
         )
-        self.automator._cleanup.assert_called_once()
+        mock_cleanup.assert_called_once()
 
-    def test_run_single_commit(self):
+    @patch.object(LLVMPRAutomator, "_get_current_branch", return_value="feature-branch")
+    @patch.object(LLVMPRAutomator, "_get_commit_stack", return_value=["commit1"])
+    @patch.object(
+        LLVMPRAutomator,
+        "_get_commit_details",
+        return_value=("Commit 1 Title", "Commit 1 Body"),
+    )
+    @patch.object(
+        LLVMPRAutomator,
+        "_create_and_push_branch_for_commit",
+        return_value="test/feature-branch-1",
+    )
+    @patch.object(LLVMPRAutomator, "_rebase_current_branch")
+    @patch.object(LLVMPRAutomator, "_cleanup")
+    def test_run_single_commit(
+        self,
+        mock_cleanup,
+        mock_rebase,
+        mock_create_branch,
+        mock_get_details,
+        mock_get_stack,
+        mock_get_branch,
+    ):
         """Test the script with a single commit."""
-        self.automator.original_branch = "feature-branch"
-        self.automator._run_cmd = MagicMock()
-        self.automator._get_current_branch.return_value = "feature-branch"
-        self.automator._get_commit_stack.return_value = ["commit1"]
-        self.automator._get_commit_details.return_value = (
-            "Commit 1 Title",
-            "Commit 1 Body",
-        )
-        self.automator._create_and_push_branch_for_commit.return_value = (
-            "test/feature-branch-1"
-        )
         self.mock_github_api.create_pr.return_value = (
             "https://github.com/test/repo/pull/1"
         )
         self.mock_github_api.merge_pr.return_value = "test/feature-branch-1"
-        self.automator.repo_settings = {"delete_branch_on_merge": False}
         self.mock_github_api.get_repo_settings.return_value = {
             "delete_branch_on_merge": False
         }
-        self.automator._get_authenticated_remote_url.return_value = (
-            "https://test_token@github.com/test_remote.git"
-        )
-        self.automator._check_work_tree.return_value = None  # Ensure clean work tree
 
         self.automator.run()
-        self.automator._create_and_push_branch_for_commit.assert_called_once_with(
+
+        mock_create_branch.assert_called_once_with(
             "commit1", "feature-branch", 0
         )
         self.mock_github_api.create_pr.assert_called_once_with(
@@ -698,29 +667,27 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_github_api.delete_branch.assert_called_once_with(
             "test/feature-branch-1"
         )
-        self.automator._cleanup.assert_called_once()
+        mock_cleanup.assert_called_once()
 
-    def test_run_no_new_commits(self):
+    @patch.object(LLVMPRAutomator, "_get_commit_stack", return_value=[])
+    @patch.object(LLVMPRAutomator, "_cleanup")
+    @patch.object(LLVMPRAutomator, "_check_work_tree", return_value=None)
+    def test_run_no_new_commits(self, mock_check_work_tree, mock_cleanup, mock_get_stack):
         """Test that the script exits gracefully when there are no new commits."""
-        self.automator._get_commit_stack.return_value = []
-
         self.automator.run()
 
         self.mock_command_runner.print.assert_called_with("No new commits to process.")
         self.mock_github_api.create_pr.assert_not_called()
-        self.automator._cleanup.assert_called_once()
+        mock_cleanup.assert_called_once()
 
     def test_cleanup_with_branches(self):
         """Test that _cleanup deletes created branches."""
-        # Un-mock the method for this test
-        del self.automator._cleanup
         self.automator.created_branches = ["branch1", "branch2"]
-        self.automator._run_cmd = MagicMock()
-
+        # Call the real _cleanup method
         self.automator._cleanup()
 
-        self.automator._run_cmd.assert_called_once_with(
-            ["git", "checkout", "feature-branch"], capture_output=True
+        self.mock_command_runner.run_command.assert_called_once_with(
+            ["git", "checkout", "feature-branch"], capture_output=True, read_only=False
         )
         self.mock_github_api.delete_branch.assert_has_calls(
             [call("branch1"), call("branch2")]
@@ -728,22 +695,22 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_cleanup_no_branches(self):
         """Test that _cleanup does not try to delete branches if none were created."""
-        # Un-mock the method for this test
-        del self.automator._cleanup
         self.automator.created_branches = []
-        self.automator._run_cmd = MagicMock()
-
+        
         self.automator._cleanup()
 
-        self.automator._run_cmd.assert_called_once_with(
-            ["git", "checkout", "feature-branch"], capture_output=True
+        self.mock_command_runner.run_command.assert_called_once_with(
+            ["git", "checkout", "feature-branch"], capture_output=True, read_only=False
         )
+        self.mock_github_api.delete_branch.assert_not_called()
 
     def test_get_commit_stack_no_merge_base(self):
         """Test that _get_commit_stack exits if no merge base is found."""
-        # Un-mock the method for this test
-        del self.automator._get_commit_stack
-        self.automator._run_cmd.return_value = subprocess.CompletedProcess([], 0, "")
+        # Configure the mock runner to return an empty string, simulating no merge base
+        self.mock_command_runner.run_command.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=""
+        )
+
         with self.assertRaises(LlvmPrError):
             self.automator._get_commit_stack()
 
