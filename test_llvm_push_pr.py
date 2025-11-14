@@ -826,9 +826,7 @@ class TestNewFeatures(unittest.TestCase):
         self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
-        self.automator._get_commit_details = MagicMock(
-            return_value=("Title", "Body")
-        )
+        self.automator._get_commit_details = MagicMock(return_value=("Title", "Body"))
         self.automator._create_and_push_branch_for_commit = MagicMock(
             return_value="test/branch"
         )
@@ -837,7 +835,9 @@ class TestNewFeatures(unittest.TestCase):
         )
         self.github_api.enable_auto_merge = MagicMock()
         mock_response = MagicMock()
-        mock_response.read.return_value = b'{"head": {"ref": "test/branch"}, "mergeable": true}'
+        mock_response.read.return_value = (
+            b'{"head": {"ref": "test/branch"}, "mergeable": true}'
+        )
         self.github_api.opener.open.return_value.__enter__.return_value = mock_response
 
         self.automator.run()
