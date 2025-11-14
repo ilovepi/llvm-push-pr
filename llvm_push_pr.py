@@ -398,7 +398,7 @@ class LLVMPRAutomator:
             if rebase_status_result.returncode == 0:
                 self.runner.print("Aborting rebase...", file=sys.stderr)
                 self._run_cmd(["git", "rebase", "--abort"], check=False)
-            raise LlvmPrError("rebase operation failed.")
+            raise LlvmPrError("rebase operation failed.") from e
 
     def _get_authenticated_remote_url(self, remote_name: str) -> str:
         """
@@ -669,7 +669,7 @@ def main() -> None:
         try:
             args.login = github_api.get_user_login()
         except urllib.error.HTTPError as e:
-            raise LlvmPrError(f"Could not fetch user login from GitHub: {e}")
+            raise LlvmPrError(f"Could not fetch user login from GitHub: {e}") from e
 
     if not args.prefix:
         args.prefix = f"users/{args.login}/"
