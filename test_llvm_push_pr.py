@@ -645,29 +645,11 @@ class TestLLVMPRAutomator(unittest.TestCase):
                 call("https://github.com/test/repo/pull/2"),
             ]
         )
-        # Assert _run_cmd for branch deletion
-        self.automator._run_cmd.assert_has_calls(
+        # Assert that delete_branch is called for each merged branch
+        self.mock_github_api.delete_branch.assert_has_calls(
             [
-                call(
-                    [
-                        "git",
-                        "push",
-                        "https://test_token@github.com/test_remote.git",
-                        "--delete",
-                        "test/feature-branch-1",
-                    ],
-                    check=False,
-                ),
-                call(
-                    [
-                        "git",
-                        "push",
-                        "https://test_token@github.com/test_remote.git",
-                        "--delete",
-                        "test/feature-branch-2",
-                    ],
-                    check=False,
-                ),
+                call("test/feature-branch-1"),
+                call("test/feature-branch-2"),
             ],
             any_order=True,
         )
@@ -713,16 +695,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.mock_github_api.merge_pr.assert_called_once_with(
             "https://github.com/test/repo/pull/1"
         )
-        self.automator._run_cmd.assert_called_once_with(
-            [
-                "git",
-                "push",
-                "https://test_token@github.com/test_remote.git",
-                "--delete",
-                "test/feature-branch-1",
-            ],
-            check=False,
-        )
+        self.mock_github_api.delete_branch.assert_called_once_with("test/feature-branch-1")
         self.automator._cleanup.assert_called_once()
 
     def test_run_no_new_commits(self):
@@ -741,27 +714,14 @@ class TestLLVMPRAutomator(unittest.TestCase):
         del self.automator._cleanup
         self.automator.created_branches = ["branch1", "branch2"]
         self.automator._run_cmd = MagicMock()
-        self.automator._get_authenticated_remote_url = MagicMock(
-            return_value="https://test_token@github.com/test_remote.git"
-        )
 
         self.automator._cleanup()
 
-        self.automator._run_cmd.assert_has_calls(
-            [
-                call(["git", "checkout", "feature-branch"], capture_output=True),
-                call(
-                    [
-                        "git",
-                        "push",
-                        "https://test_token@github.com/test_remote.git",
-                        "--delete",
-                        "branch1",
-                        "branch2",
-                    ],
-                    check=False,
-                ),
-            ]
+        self.automator._run_cmd.assert_called_once_with(
+            ["git", "checkout", "feature-branch"], capture_output=True
+        )
+        self.mock_github_api.delete_branch.assert_has_calls(
+            [call("branch1"), call("branch2")]
         )
 
     def test_cleanup_no_branches(self):
@@ -970,6 +930,7 @@ class TestNewFeatures(unittest.TestCase):
             return_value="https://github.com/test/repo/pull/1"
         )
         self.github_api.merge_pr = MagicMock(return_value="test/branch")
+        self.github_api.delete_branch = MagicMock() # Mock delete_branch for this test
         self.automator.repo_settings = {"delete_branch_on_merge": False}
         self.github_api.get_repo_settings = MagicMock(
             return_value={"delete_branch_on_merge": False, "default_branch": "main"}
@@ -981,19 +942,4 @@ class TestNewFeatures(unittest.TestCase):
         self.automator.run()
 
         self.github_api.merge_pr.assert_called_once()
-        self.automator._run_cmd.assert_has_calls(
-            [
-                call(
-                    [
-                        "git",
-                        "push",
-                        "https://test_token@github.com/test_remote.git",
-                        "--delete",
-                        "test/branch",
-                    ],
-                    check=False,
-                ),
-                call(["git", "checkout", "feature-branch"], capture_output=True),
-            ],
-            any_order=True,
-        )
+        self.github_api.delete_branch.assert_called_once_with("test/branch")
