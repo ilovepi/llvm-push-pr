@@ -21,6 +21,10 @@ REPO_SLUG = "ilovepi/llvm-push-pr"
 
 LLVM_GITHUB_TOKEN_VAR = "LLVM_GITHUB_TOKEN"
 
+GITHUB_REMOTE_NAME = "origin"
+UPSTREAM_REMOTE_NAME = "upstream"
+BASE_BRANCH = "main"
+
 
 class LlvmPrError(Exception):
     """Custom exception for errors in the PR automator script."""
@@ -83,10 +87,10 @@ class CommandRunner:
                 text=text,
                 input=stdin_input,
             )
-        except FileNotFoundError:
-            sys.exit(
-                f"Error: Command '{command[0]}' not found. Is it installed and in your PATH?"
-            )
+        except FileNotFoundError as e:
+            raise LlvmPrError(
+                f"Command '{command[0]}' not found. Is it installed and in your PATH?"
+            ) from e
         except subprocess.CalledProcessError as e:
             self.print(f"Error running command: {' '.join(command)}", file=sys.stderr)
             if e.stdout:
@@ -100,6 +104,9 @@ class GitHubAPI:
     """A wrapper for the GitHub API."""
 
     BASE_URL = "https://api.github.com"
+    MERGE_MAX_RETRIES = 10
+    MERGE_RETRY_DELAY = 5  # seconds
+    REQUEST_TIMEOUT = 30  # seconds
 
     def __init__(self, runner: CommandRunner, token: str):
         self.runner = runner
@@ -131,7 +138,7 @@ class GitHubAPI:
         )
 
         try:
-            return self.opener.open(req, timeout=30)
+            return self.opener.open(req, timeout=self.REQUEST_TIMEOUT)
         except urllib.error.HTTPError as e:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
@@ -235,11 +242,9 @@ class GitHubAPI:
             raise LlvmPrError(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
-        max_retries = 10
-        retry_delay = 5  # seconds
-        for i in range(max_retries):
+        for i in range(self.MERGE_MAX_RETRIES):
             self.runner.print(
-                f"Attempting to merge {pr_url} (attempt {i + 1}/{max_retries})..."
+                f"Attempting to merge {pr_url} (attempt {i + 1}/{self.MERGE_MAX_RETRIES})..."
             )
 
             pr_data = self._get_pr_details(pr_number)
@@ -255,11 +260,13 @@ class GitHubAPI:
                     return head_branch
 
             self.runner.print(
-                f"PR not mergeable yet. Retrying in {retry_delay} seconds..."
+                f"PR not mergeable yet (state: {pr_data.get('mergeable_state', 'unknown')}). Retrying in {self.MERGE_RETRY_DELAY} seconds..."
             )
-            time.sleep(retry_delay)
+            time.sleep(self.MERGE_RETRY_DELAY)
 
-        raise LlvmPrError(f"PR was not mergeable after {max_retries} attempts.")
+        raise LlvmPrError(
+            f"PR was not mergeable after {self.MERGE_MAX_RETRIES} attempts."
+        )
 
     def enable_auto_merge(self, pr_url: str) -> None:
         if not pr_url:
@@ -400,7 +407,7 @@ class LLVMPRAutomator:
     def _get_authenticated_remote_url(self, remote_name: str) -> str:
         """
         Generates an authenticated URL to use for all operations. This includes
-        for local operations, like rebaseing after merging a PR in a stack.
+        for local operations, like rebasing after merging a PR in a stack.
         This allows the script to avoid reauthenticating (e.g. via ssh), since
         the token can be reused for all operations.
         """
@@ -521,6 +528,8 @@ class LLVMPRAutomator:
                         check=False,
                     )
             if temp_branch in self.created_branches:
+                # If the branch was successfully merged, it should not be deleted
+                # again during cleanup.
                 self.created_branches.remove(temp_branch)
 
     def run(self) -> None:
@@ -593,10 +602,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create and land a stack of Pull Requests."
     )
-
-    GITHUB_REMOTE_NAME = "origin"
-    UPSTREAM_REMOTE_NAME = "upstream"
-    BASE_BRANCH = "main"
 
     command_runner = CommandRunner()
     token = os.getenv(LLVM_GITHUB_TOKEN_VAR)
