@@ -134,7 +134,7 @@ class TestCommandRunner(unittest.TestCase):
         """Test that run_command exits if the command is not found."""
         with patch("subprocess.run", side_effect=FileNotFoundError):
             command_runner = CommandRunner()
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(LlvmPrError):
                 command_runner.run_command(["non_existent_command"])
 
     def test_run_command_check_false(self):
