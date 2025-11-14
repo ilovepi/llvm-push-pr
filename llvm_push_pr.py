@@ -28,7 +28,7 @@ class LlvmPrError(Exception):
 
 @dataclass
 class PRAutomatorConfig:
-    """Configuration for the PR automator."""
+    """Configuration Data."""
 
     user_login: str
     token: str
