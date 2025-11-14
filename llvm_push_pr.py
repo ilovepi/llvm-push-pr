@@ -15,15 +15,18 @@ from typing import List, Optional
 from http.client import HTTPResponse
 from dataclasses import dataclass
 
-
-# TODO(user): When submitting upstream, change this to "llvm/llvm-project".
-REPO_SLUG = "ilovepi/llvm-push-pr"
-
-LLVM_GITHUB_TOKEN_VAR = "LLVM_GITHUB_TOKEN"
-
+# --- Constants --- #
+BASE_BRANCH = "main"
 GITHUB_REMOTE_NAME = "origin"
 UPSTREAM_REMOTE_NAME = "upstream"
-BASE_BRANCH = "main"
+
+LLVM_GITHUB_TOKEN_VAR = "LLVM_GITHUB_TOKEN"
+LLVM_REPO = "ilovepi/llvm-push-pr"
+GITHUB_API = "https://api.github.com"
+
+MERGE_MAX_RETRIES = 10
+MERGE_RETRY_DELAY = 5  # seconds
+REQUEST_TIMEOUT = 30  # seconds
 
 
 class LlvmPrError(Exception):
@@ -105,11 +108,6 @@ class CommandRunner:
 class GitHubAPI:
     """A wrapper for the GitHub API."""
 
-    BASE_URL = "https://api.github.com"
-    MERGE_MAX_RETRIES = 10
-    MERGE_RETRY_DELAY = 5  # seconds
-    REQUEST_TIMEOUT = 30  # seconds
-
     def __init__(self, runner: CommandRunner, token: str):
         self.runner = runner
         self.headers = {
@@ -124,7 +122,7 @@ class GitHubAPI:
     def _request(
         self, method: str, endpoint: str, json_payload: Optional[dict] = None
     ) -> HTTPResponse:
-        url = f"{self.BASE_URL}{endpoint}"
+        url = f"{GITHUB_API}{endpoint}"
         self.runner.verbose_print(f"API Request: {method.upper()} {url}")
         if json_payload:
             self.runner.verbose_print(f"Payload: {json_payload}")
@@ -140,7 +138,7 @@ class GitHubAPI:
         )
 
         try:
-            return self.opener.open(req, timeout=self.REQUEST_TIMEOUT)
+            return self.opener.open(req, timeout=REQUEST_TIMEOUT)
         except urllib.error.HTTPError as e:
             self.runner.print(
                 f"Error making API request to {url}: {e}", file=sys.stderr
@@ -199,7 +197,7 @@ class GitHubAPI:
             "draft": draft,
         }
         response_data = self._request_and_parse_json(
-            "POST", f"/repos/{REPO_SLUG}/pulls", json_payload=data
+            "POST", f"/repos/{LLVM_REPO}/pulls", json_payload=data
         )
         pr_url = response_data.get("html_url")
         if not self.runner.dry_run:
@@ -207,12 +205,12 @@ class GitHubAPI:
         return pr_url
 
     def get_repo_settings(self) -> dict:
-        return self._request_and_parse_json("GET", f"/repos/{REPO_SLUG}")
+        return self._request_and_parse_json("GET", f"/repos/{LLVM_REPO}")
 
     def _get_pr_details(self, pr_number: str) -> dict:
         """Fetches the JSON details for a given pull request number."""
         return self._request_and_parse_json(
-            "GET", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
+            "GET", f"/repos/{LLVM_REPO}/pulls/{pr_number}"
         )
 
     def _attempt_squash_merge(self, pr_number: str) -> bool:
@@ -220,7 +218,7 @@ class GitHubAPI:
         try:
             self._request_and_parse_json(
                 "PUT",
-                f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
+                f"/repos/{LLVM_REPO}/pulls/{pr_number}/merge",
                 json_payload={"merge_method": "squash"},
             )
             return True
@@ -244,9 +242,9 @@ class GitHubAPI:
             raise LlvmPrError(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
-        for i in range(self.MERGE_MAX_RETRIES):
+        for i in range(MERGE_MAX_RETRIES):
             self.runner.print(
-                f"Attempting to merge {pr_url} (attempt {i + 1}/{self.MERGE_MAX_RETRIES})..."
+                f"Attempting to merge {pr_url} (attempt {i + 1}/{MERGE_MAX_RETRIES})..."
             )
 
             pr_data = self._get_pr_details(pr_number)
@@ -262,13 +260,11 @@ class GitHubAPI:
                     return head_branch
 
             self.runner.print(
-                f"PR not mergeable yet (state: {pr_data.get('mergeable_state', 'unknown')}). Retrying in {self.MERGE_RETRY_DELAY} seconds..."
+                f"PR not mergeable yet (state: {pr_data.get('mergeable_state', 'unknown')}). Retrying in {MERGE_RETRY_DELAY} seconds..."
             )
-            time.sleep(self.MERGE_RETRY_DELAY)
+            time.sleep(MERGE_RETRY_DELAY)
 
-        raise LlvmPrError(
-            f"PR was not mergeable after {self.MERGE_MAX_RETRIES} attempts."
-        )
+        raise LlvmPrError(f"PR was not mergeable after {MERGE_MAX_RETRIES} attempts.")
 
     def enable_auto_merge(self, pr_url: str) -> None:
         if not pr_url:
@@ -290,7 +286,7 @@ class GitHubAPI:
         }
         self._request_no_content(
             "PUT",
-            f"/repos/{REPO_SLUG}/pulls/{pr_number}/auto-merge",
+            f"/repos/{LLVM_REPO}/pulls/{pr_number}/auto-merge",
             json_payload=data,
         )
         self.runner.print("Auto-merge enabled.")
@@ -306,7 +302,7 @@ class GitHubAPI:
             return
         try:
             self._request_no_content(
-                "DELETE", f"/repos/{REPO_SLUG}/git/refs/heads/{branch_name}"
+                "DELETE", f"/repos/{LLVM_REPO}/git/refs/heads/{branch_name}"
             )
         except urllib.error.HTTPError as e:
             if e.code == 422:
