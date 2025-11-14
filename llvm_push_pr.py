@@ -205,6 +205,28 @@ class GitHubAPI:
     def get_repo_settings(self) -> dict:
         return self._request_and_parse_json("GET", f"/repos/{REPO_SLUG}")
 
+    def _get_pr_details(self, pr_number: str) -> dict:
+        """Fetches the JSON details for a given pull request number."""
+        return self._request_and_parse_json(
+            "GET", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
+        )
+
+    def _attempt_squash_merge(self, pr_number: str) -> bool:
+        """Attempts to squash merge a PR, returning True on success."""
+        try:
+            self._request_and_parse_json(
+                "PUT",
+                f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
+                json_payload={"merge_method": "squash"},
+            )
+            return True
+        except urllib.error.HTTPError as e:
+            # A 405 status code means the PR is not in a mergeable state.
+            if e.code == 405:
+                return False
+            # Re-raise other HTTP errors.
+            raise e
+
     def merge_pr(self, pr_url: str) -> Optional[str]:
         if not pr_url:
             return None
@@ -218,49 +240,29 @@ class GitHubAPI:
             raise LlvmPrError(f"Could not extract PR number from URL: {pr_url}")
         pr_number = pr_number_match.group(1)
 
-        head_branch = ""
         max_retries = 10
         retry_delay = 5  # seconds
         for i in range(max_retries):
             self.runner.print(
-                f"Attempting to merge {pr_url} (attempt {i+1}/{max_retries})..."
+                f"Attempting to merge {pr_url} (attempt {i + 1}/{max_retries})..."
             )
 
-            pr_data = self._request_and_parse_json(
-                "GET", f"/repos/{REPO_SLUG}/pulls/{pr_number}"
-            )
+            pr_data = self._get_pr_details(pr_number)
             head_branch = pr_data["head"]["ref"]
 
-            if pr_data["mergeable"]:
-                merge_data = {
-                    "merge_method": "squash",
-                }
-                try:
-                    self._request_and_parse_json(
-                        "PUT",
-                        f"/repos/{REPO_SLUG}/pulls/{pr_number}/merge",
-                        json_payload=merge_data,
-                    )
-                    self.runner.print("Successfully merged.")
-                    time.sleep(2)
-                    return head_branch
-                except urllib.error.HTTPError as e:
-                    if e.code == 405:
-                        self.runner.print(
-                            "PR not mergeable yet. Retrying in "
-                            f"{retry_delay} seconds..."
-                        )
-                        time.sleep(retry_delay)
-                    else:
-                        raise e
-            elif pr_data["mergeable_state"] == "dirty":
+            if pr_data.get("mergeable_state") == "dirty":
                 raise LlvmPrError("Merge conflict.")
-            else:
-                self.runner.print(
-                    f"PR not mergeable yet ({pr_data['mergeable_state']}). "
-                    f"Retrying in {retry_delay} seconds..."
-                )
-                time.sleep(retry_delay)
+
+            if pr_data.get("mergeable"):
+                if self._attempt_squash_merge(pr_number):
+                    self.runner.print("Successfully merged.")
+                    time.sleep(2)  # Allow GitHub's API to update.
+                    return head_branch
+
+            self.runner.print(
+                f"PR not mergeable yet. Retrying in {retry_delay} seconds..."
+            )
+            time.sleep(retry_delay)
 
         raise LlvmPrError(f"PR was not mergeable after {max_retries} attempts.")
 
