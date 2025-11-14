@@ -540,12 +540,10 @@ class LLVMPRAutomator:
                 return
 
             self._validate_merge_config(len(commits))
-            first_commit_title, _ = self._get_commit_details(commits[0])
-            branch_base_name = (
-                self._sanitize_branch_name(first_commit_title)
-                if self.original_branch == "main"
-                else self.original_branch
-            )
+            branch_base_name = self.original_branch
+            if self.original_branch == "main":
+                first_commit_title, _ = self._get_commit_details(commits[0])
+                branch_base_name = self._sanitize_branch_name(first_commit_title)
 
             for i in range(len(commits)):
                 if i > 0:
