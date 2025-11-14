@@ -306,24 +306,19 @@ class TestGitHubAPI(unittest.TestCase):
 
 class TestLLVMPRAutomator(unittest.TestCase):
     def setUp(self):
-        self.args = argparse.Namespace(
-            remote="origin",
+        self.mock_command_runner = MagicMock(spec=CommandRunner)
+        self.mock_github_api = MagicMock(spec=GitHubAPI)
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.mock_github_api,
+            user_login="test_user",
+            token="test_token",
+            base_branch="main",
             upstream_remote="upstream",
-            base="main",
             prefix="test/",
             draft=False,
             no_merge=False,
             auto_merge=False,
-            dry_run=False,
-        )
-        self.mock_command_runner = MagicMock(spec=CommandRunner)
-        self.mock_github_api = MagicMock(spec=GitHubAPI)
-        self.automator = LLVMPRAutomator(
-            self.args,
-            self.mock_command_runner,
-            self.mock_github_api,
-            "test_user",
-            "test_token",
         )
         self.automator.original_branch = "feature-branch"
         # Mock the git commands that are not part of the GitHubAPI
@@ -491,7 +486,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_run_with_draft_flag(self):
         """Test that the --draft flag is passed to create_pr."""
-        self.args.draft = True
+        self.automator.draft = True
         self.automator._get_commit_stack.return_value = ["commit1"]
         self.automator._get_commit_details.return_value = (
             "Commit 1 Title",
@@ -528,7 +523,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_run_with_no_merge(self):
         """Test that --no-merge prevents the script from merging the PR."""
-        self.args.no_merge = True
+        self.automator.no_merge = True
         self.automator._get_commit_stack.return_value = ["commit1"]
         self.automator._get_commit_details.return_value = (
             "Commit 1 Title",
@@ -712,14 +707,16 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_run_auto_merge_multiple_commits(self):
         """Test that --auto-merge with multiple commits exits."""
-        self.args.auto_merge = True
+        self.automator.auto_merge = True
+        self.automator._get_commit_details.return_value = ("Commit Title", "Commit Body")
         self.automator._get_commit_stack.return_value = ["commit1", "commit2"]
         with self.assertRaises(LlvmPrError):
             self.automator.run()
 
     def test_run_no_merge_multiple_commits(self):
         """Test that --no-merge with multiple commits exits."""
-        self.args.no_merge = True
+        self.automator.no_merge = True
+        self.automator._get_commit_details.return_value = ("Commit Title", "Commit Body")
         self.automator._get_commit_stack.return_value = ["commit1", "commit2"]
         with self.assertRaises(LlvmPrError):
             self.automator.run()
@@ -736,22 +733,17 @@ class TestNewFeatures(unittest.TestCase):
         self.mock_command_runner.dry_run = False
         self.github_api = GitHubAPI(self.mock_command_runner, "test_token")
         self.github_api.opener = MagicMock()  # Mock the opener
-        self.args = argparse.Namespace(
-            remote="origin",
+        self.automator = LLVMPRAutomator(
+            runner=self.mock_command_runner,
+            github_api=self.github_api,
+            user_login="test_user",
+            token="test_token",
+            base_branch="main",
             upstream_remote="upstream",
-            base="main",
             prefix="test/",
             draft=False,
             no_merge=False,
             auto_merge=False,
-            dry_run=False,
-        )
-        self.automator = LLVMPRAutomator(
-            self.args,
-            self.mock_command_runner,
-            self.github_api,
-            "test_user",
-            "test_token",
         )
         self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
@@ -792,7 +784,7 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_run_with_auto_merge(self):
         """Test that --auto-merge calls enable_auto_merge."""
-        self.args.auto_merge = True
+        self.automator.auto_merge = True
         self.automator._get_commit_stack.return_value = ["commit1"]
         self.automator._get_commit_details.return_value = ("Title", "Body")
         self.automator._create_and_push_branch_for_commit.return_value = "test/branch"
@@ -800,7 +792,9 @@ class TestNewFeatures(unittest.TestCase):
             return_value="https://github.com/test/repo/pull/1"
         )
         self.github_api.enable_auto_merge = MagicMock()
-        self.github_api.get_repo_settings = MagicMock(return_value={})
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"head": {"ref": "test/branch"}, "mergeable": true}'
+        self.github_api.opener.open.return_value.__enter__.return_value = mock_response
 
         self.automator.run()
 
