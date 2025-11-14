@@ -374,10 +374,9 @@ class LLVMPRAutomator:
         git_env[LLVM_GITHUB_TOKEN_VAR] = self.config.token
         git_env["GIT_TERMINAL_PROMPT"] = "0"
 
-        self._run_cmd(
-            ["git", "fetch", self.config.upstream_remote, self.config.base_branch],
-            env=git_env,
-        )
+        https_upstream_url = self._get_https_url_for_remote(self.config.upstream_remote)
+        refspec = f"refs/heads/{self.config.base_branch}:refs/remotes/{self.config.upstream_remote}/{self.config.base_branch}"
+        self._run_cmd(["git", "fetch", https_upstream_url, refspec], env=git_env)
 
         try:
             self._run_cmd(["git", "rebase", target], env=git_env)
@@ -407,13 +406,8 @@ class LLVMPRAutomator:
                 self._run_cmd(["git", "rebase", "--abort"], check=False, env=git_env)
             raise LlvmPrError("rebase operation failed.") from e
 
-    def _get_authenticated_remote_url(self, remote_name: str) -> str:
-        """
-        Generates an authenticated URL to use for all operations. This includes
-        for local operations, like rebasing after merging a PR in a stack.
-        This allows the script to avoid reauthenticating (e.g. via ssh), since
-        the token can be reused for all operations.
-        """
+    def _get_https_url_for_remote(self, remote_name: str) -> str:
+        """Gets the URL for a remote and converts it to HTTPS if necessary."""
         remote_url_result = self._run_cmd(
             ["git", "remote", "get-url", remote_name],
             capture_output=True,
@@ -422,12 +416,12 @@ class LLVMPRAutomator:
         )
         remote_url = remote_url_result.stdout.strip()
         if remote_url.startswith("git@github.com:"):
-            return remote_url.replace(
-                "git@github.com:", f"https://{self.config.token}@github.com/"
-            )
+            return remote_url.replace("git@github.com:", "https://github.com/")
         if remote_url.startswith("https://github.com/"):
-            return remote_url.replace("https://", f"https://{self.config.token}@")
-        raise LlvmPrError(f"Unsupported remote URL format: {remote_url}")
+            return remote_url
+        raise LlvmPrError(
+            f"Unsupported remote URL format for {remote_name}: {remote_url}"
+        )
 
     def _get_commit_stack(self) -> List[str]:
         target = f"{self.config.upstream_remote}/{self.config.base_branch}"
@@ -495,10 +489,12 @@ class LLVMPRAutomator:
         git_env[LLVM_GITHUB_TOKEN_VAR] = self.config.token
         git_env["GIT_TERMINAL_PROMPT"] = "0"
 
+        https_remote_url = self._get_https_url_for_remote(self.remote)
+
         push_command = [
             "git",
             "push",
-            self.remote,
+            https_remote_url,
             f"{commit_hash}:refs/heads/{branch_name}",
         ]
         self._run_cmd(push_command, env=git_env)

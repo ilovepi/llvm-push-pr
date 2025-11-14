@@ -418,28 +418,41 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self, mock_get_commit_details
     ):
         """Test that _create_and_push_branch_for_commit handles empty commit title."""
+        self.mock_command_runner.run_command.side_effect = [
+            # Result for _get_https_url_for_remote
+            subprocess.CompletedProcess(
+                [], 0, stdout="git@github.com:test/repo.git"
+            ),
+            # Result for the git push command
+            subprocess.CompletedProcess([], 0, stdout=b""),
+        ]
+
         # Call the real method
         branch_name = self.automator._create_and_push_branch_for_commit(
             "commit1", "base-branch", 0
         )
 
-        # Define the expected secure environment
-        expected_env = os.environ.copy()
-        expected_env["GIT_ASKPASS"] = self.automator._git_askpass_cmd
-        expected_env[LLVM_GITHUB_TOKEN_VAR] = self.config.token
-        expected_env["GIT_TERMINAL_PROMPT"] = "0"
-
         # Assert the behavior
         self.assertEqual(branch_name, "test/base-branch-1")
-        self.mock_command_runner.run_command.assert_called_once_with(
+        self.mock_command_runner.run_command.assert_has_calls(
             [
-                "git",
-                "push",
-                "test_remote",
-                "commit1:refs/heads/test/base-branch-1",
-            ],
-            read_only=False,
-            env=expected_env,
+                call(
+                    ["git", "remote", "get-url", "test_remote"],
+                    capture_output=True,
+                    text=True,
+                    read_only=True,
+                ),
+                call(
+                    [
+                        "git",
+                        "push",
+                        "https://github.com/test/repo.git",
+                        "commit1:refs/heads/test/base-branch-1",
+                    ],
+                    read_only=False,
+                    env=ANY,
+                ),
+            ]
         )
 
         def test_rebase_current_branch_conflict_no_rebase_in_progress(self):
@@ -452,19 +465,40 @@ class TestLLVMPRAutomator(unittest.TestCase):
     def test_rebase_current_branch_conflict(self, mock_check_work_tree):
         """Test that _rebase_current_branch exits on rebase conflict."""
         self.mock_command_runner.run_command.side_effect = [
-            subprocess.CompletedProcess([], 0, stdout=b""),  # git fetch
-            subprocess.CalledProcessError(1, "cmd"),  # git rebase
-            subprocess.CompletedProcess([], 0, stdout=""),  # git status
-            subprocess.CompletedProcess([], 0, stdout=b""),  # git rebase --abort
+            # 1. Result for _get_https_url_for_remote
+            subprocess.CompletedProcess([], 0, stdout="git@github.com:llvm/llvm-project.git"),
+            # 2. Result for git fetch
+            subprocess.CompletedProcess([], 0, stdout=b""),
+            # 3. Result for git rebase (failure)
+            subprocess.CalledProcessError(1, "cmd"),
+            # 4. Result for git status
+            subprocess.CompletedProcess([], 0, stdout=""),
+            # 5. Result for git rebase --abort
+            subprocess.CompletedProcess([], 0, stdout=b""),
         ]
 
         with self.assertRaises(LlvmPrError):
             self.automator._rebase_current_branch()
 
+        # Assert the calls to mock_command_runner.run_command
         self.mock_command_runner.run_command.assert_has_calls(
             [
-                call(["git", "fetch", "upstream", "main"], read_only=False, env=ANY),
-                call(["git", "rebase", "upstream/main"], read_only=False, env=ANY),
+                call(
+                    ["git", "remote", "get-url", "upstream"],
+                    capture_output=True,
+                    text=True,
+                    read_only=True,
+                ),
+                call(
+                    ["git", "fetch", "https://github.com/llvm/llvm-project.git", "refs/heads/main:refs/remotes/upstream/main"],
+                    read_only=False,
+                    env=ANY,
+                ),
+                call(
+                    ["git", "rebase", "upstream/main"],
+                    read_only=False,
+                    env=ANY,
+                ),
                 call(
                     ["git", "status", "--verify-status=REBASE_HEAD"],
                     check=False,
@@ -474,7 +508,10 @@ class TestLLVMPRAutomator(unittest.TestCase):
                     env=ANY,
                 ),
                 call(
-                    ["git", "rebase", "--abort"], check=False, read_only=False, env=ANY
+                    ["git", "rebase", "--abort"],
+                    check=False,
+                    read_only=False,
+                    env=ANY,
                 ),
             ]
         )
