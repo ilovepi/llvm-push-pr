@@ -317,10 +317,12 @@ class LLVMPRAutomator:
         runner: CommandRunner,
         github_api: "GitHubAPI",
         config: "PRAutomatorConfig",
+        remote: str,
     ):
         self.runner = runner
         self.github_api = github_api
         self.config = config
+        self.remote = remote
         self.original_branch: str = ""
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
@@ -476,7 +478,7 @@ class LLVMPRAutomator:
         self.runner.print(f"Processing commit {commit_hash[:7]}: {commit_title}")
         self.runner.print(f"Pushing commit to temporary branch '{branch_name}'")
 
-        push_url = f"https://{self.config.token}@github.com/{REPO_SLUG}.git"
+        push_url = self._get_authenticated_remote_url(self.remote)
         push_command = [
             "git",
             "push",
@@ -496,7 +498,7 @@ class LLVMPRAutomator:
             commit_hash, base_branch_name, index
         )
         pr_url = self.github_api.create_pr(
-            head_branch=temp_branch,
+            head_branch=f"{self.config.user_login}:{temp_branch}",
             base_branch=self.config.base_branch,
             title=commit_title,
             body=commit_body,
@@ -511,8 +513,12 @@ class LLVMPRAutomator:
                 if merged_branch and not self.repo_settings.get(
                     "delete_branch_on_merge"
                 ):
-                    self.github_api.delete_branch(
-                        merged_branch, self.repo_settings.get("default_branch")
+                    # After a merge, the temporary branch should be deleted from
+                    # the user's fork.
+                    delete_url = self._get_authenticated_remote_url(self.remote)
+                    self._run_cmd(
+                        ["git", "push", delete_url, "--delete", merged_branch],
+                        check=False,
                     )
             if temp_branch in self.created_branches:
                 self.created_branches.remove(temp_branch)
@@ -560,7 +566,7 @@ class LLVMPRAutomator:
         self._run_cmd(["git", "checkout", self.original_branch], capture_output=True)
         if self.created_branches:
             self.runner.print("Cleaning up temporary remote branches...")
-            delete_url = f"https://{self.config.token}@github.com/{REPO_SLUG}.git"
+            delete_url = self._get_authenticated_remote_url(self.remote)
             self._run_cmd(
                 ["git", "push", delete_url, "--delete"] + self.created_branches,
                 check=False,
@@ -686,6 +692,7 @@ def main() -> None:
             runner=command_runner,
             github_api=github_api,
             config=config,
+            remote=args.remote,
         )
         automator.run()
     except LlvmPrError as e:
