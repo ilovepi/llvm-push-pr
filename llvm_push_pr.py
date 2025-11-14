@@ -528,9 +528,7 @@ class LLVMPRAutomator:
             self.github_api.enable_auto_merge(pr_url)
         else:
             merged_branch = self.github_api.merge_pr(pr_url)
-            if merged_branch and not self.repo_settings.get(
-                "delete_branch_on_merge"
-            ):
+            if merged_branch and not self.repo_settings.get("delete_branch_on_merge"):
                 # After a merge, the branch should be deleted.
                 self.github_api.delete_branch(merged_branch)
 
