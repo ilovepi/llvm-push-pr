@@ -37,6 +37,13 @@ This will:
 
 If any rebase or merge fails, the script will abort and clean up after itself, leaving your repository in its original state.
 
+## Cleanup Steps
+
+Regardless of success or failure, the script performs the following cleanup steps to ensure your local repository is left in a consistent state:
+
+1.  **Checkout Original Branch:** The script will check out the branch you were on when you started the script.
+2.  **Delete Temporary Remote Branches:** Any temporary branches created on your fork (e.g., `users/johndoe/my-feature-1`) will be deleted from the remote. This prevents clutter in your fork.
+
 ## Examples
 
 ### Dry Run (Safe Mode)
@@ -72,6 +79,13 @@ Currently, this is only supported for single-commit branches.
 ```bash
 python3 llvm_push_pr.py --no-merge
 ```
+
+## Auto-Detection Features
+
+To simplify usage, the script attempts to auto-detect certain values if they are not explicitly provided via command-line arguments:
+
+*   **GitHub Login (`--login`):** If the `--login` flag is omitted, the script will attempt to fetch your GitHub username using the provided `LLVM_GITHUB_TOKEN` by making an API call to GitHub.
+*   **Temporary Branch Prefix (`--prefix`):** If the `--prefix` flag is omitted, temporary branches created on your fork will be prefixed with `users/<your_github_login>/`. For example, if your login is `johndoe`, branches will be named like `users/johndoe/my-feature-1`.
 
 ## Command-Line Options
 
