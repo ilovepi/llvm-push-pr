@@ -336,9 +336,7 @@ class LLVMPRAutomator:
         )
 
     def _get_git_env(self) -> dict:
-        git_env = dict()
-        git_env["HOME"] = os.environ["HOME"]
-        git_env["PATH"] = os.environ["PATH"]
+        git_env = os.environ.copy()
         git_env["GIT_ASKPASS"] = self._git_askpass_cmd
         git_env[LLVM_GITHUB_TOKEN_VAR] = self.config.token
         git_env["GIT_TERMINAL_PROMPT"] = "0"
