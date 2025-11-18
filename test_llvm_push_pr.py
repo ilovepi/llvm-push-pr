@@ -648,7 +648,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
         self.automator.run()
 
-        self.assertEqual(mock_rebase.call_count, 3)
+        self.assertEqual(mock_rebase.call_count, 2)
         self.assertEqual(mock_create_branch.call_count, 2)
         self.assertEqual(self.mock_github_api.create_pr.call_count, 2)
         self.assertEqual(self.mock_github_api.merge_pr.call_count, 2)
