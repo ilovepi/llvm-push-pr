@@ -333,7 +333,7 @@ class LLVMPRAutomator:
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
         self._git_askpass_cmd = (
-            f"python3 -c \"import os; print(os.environ['{LLVM_GITHUB_TOKEN_VAR}'])\""
+            f"{sys.executable} -c \"import os; print(os.environ['{LLVM_GITHUB_TOKEN_VAR}'])\""
         )
 
     def _get_git_env(self) -> dict:
