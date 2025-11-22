@@ -12,10 +12,9 @@ A Python script to reliably land a stack of commits as sequential pull requests,
 
 ## Prerequisites
 
-1.  **Python 3.6+**
+1.  **Python 3.8+**
 2.  **Git**
-3.  **GitHub CLI (`gh`)**: Version 2.5.0 or newer is required for API commands.
-    *   Authenticate with `gh auth login`. Ensure your token has the `repo` scope.
+3.  **GitHub Token**: A Personal Access Token with `repo` scope.
 4.  **Configured Git Remotes**:
     *   `origin`: Your fork (e.g., `git@github.com:<your-username>/llvm-project.git`).
     *   `upstream`: The main repository (e.g., `https://github.com/llvm/llvm-project.git`).

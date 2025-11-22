@@ -11,7 +11,8 @@ import time
 import urllib.error
 import urllib.request
 
-from typing import List, Optional
+# TODO: Remove typing workarounds when we use a newer python.
+from typing import List, Optional, Tuple
 from http.client import HTTPResponse
 from dataclasses import dataclass
 
@@ -447,7 +448,7 @@ class LLVMPRAutomator:
         )
         return result.stdout.strip().splitlines()
 
-    def _get_commit_details(self, commit_hash: str) -> tuple[str, str]:
+    def _get_commit_details(self, commit_hash: str) -> Tuple[str, str]:
         # Get the subject and body from git show. Insert "\n\n" between to make
         # parsing simple to do w/ split.
         result = self._run_cmd(
