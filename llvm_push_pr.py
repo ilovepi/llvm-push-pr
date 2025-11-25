@@ -332,15 +332,16 @@ class LLVMPRAutomator:
         self.original_branch: str = ""
         self.created_branches: List[str] = []
         self.repo_settings: dict = {}
-        self._git_askpass_cmd = (
-            f"{sys.executable} -c \"import os; print(os.environ['{LLVM_GITHUB_TOKEN_VAR}'])\""
-        )
 
     def _get_git_env(self) -> dict:
         git_env = os.environ.copy()
-        git_env["GIT_ASKPASS"] = self._git_askpass_cmd
         git_env[LLVM_GITHUB_TOKEN_VAR] = self.config.token
         git_env["GIT_TERMINAL_PROMPT"] = "0"
+        git_env["GIT_CONFIG_COUNT"] = "1"
+        git_env["GIT_CONFIG_KEY_0"] = "credential.helper"
+        git_env["GIT_CONFIG_VALUE_0"] = (
+            f"!{sys.executable} -c \"import os; print('username=x'); print('password=' + os.environ['{LLVM_GITHUB_TOKEN_VAR}']);\""
+        )
         return git_env
 
     def _run_cmd(
