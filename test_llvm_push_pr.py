@@ -456,7 +456,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
                         "https://github.com/test/repo.git",
                         "commit1:refs/heads/test/base-branch-1",
                     ],
-                    read_only=False,
                     env=ANY,
                 ),
             ]
@@ -505,12 +504,10 @@ class TestLLVMPRAutomator(unittest.TestCase):
                         "https://github.com/llvm/llvm-project.git",
                         "refs/heads/main:refs/remotes/upstream/main",
                     ],
-                    read_only=False,
                     env=ANY,
                 ),
                 call(
                     ["git", "rebase", "upstream/main"],
-                    read_only=False,
                     env=ANY,
                 ),
                 call(
@@ -524,7 +521,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
                 call(
                     ["git", "rebase", "--abort"],
                     check=False,
-                    read_only=False,
                     env=ANY,
                 ),
             ]
@@ -548,7 +544,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
         self.automator._get_commit_details = MagicMock(
@@ -591,7 +586,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
         self.automator._get_commit_details = MagicMock(
@@ -747,7 +741,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator._cleanup()
 
         self.mock_command_runner.run_command.assert_called_once_with(
-            ["git", "checkout", "feature-branch"], capture_output=True, read_only=False
+            ["git", "checkout", "feature-branch"], capture_output=True
         )
         self.mock_github_api.delete_branch.assert_has_calls(
             [call("branch1"), call("branch2")]
@@ -760,7 +754,7 @@ class TestLLVMPRAutomator(unittest.TestCase):
         self.automator._cleanup()
 
         self.mock_command_runner.run_command.assert_called_once_with(
-            ["git", "checkout", "feature-branch"], capture_output=True, read_only=False
+            ["git", "checkout", "feature-branch"], capture_output=True
         )
         self.mock_github_api.delete_branch.assert_not_called()
 
@@ -827,7 +821,6 @@ class TestNewFeatures(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        self.automator._run_cmd = MagicMock()
         self.automator._get_repo_slug = MagicMock(return_value="test/repo")
         self.automator._get_current_branch = MagicMock(return_value="feature-branch")
         self.automator._get_commit_stack = MagicMock()
@@ -873,7 +866,6 @@ class TestNewFeatures(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
         self.automator._get_commit_details = MagicMock(return_value=("Title", "Body"))
@@ -904,7 +896,6 @@ class TestNewFeatures(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._get_current_branch = MagicMock(return_value="feature-branch")
         self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
@@ -937,7 +928,6 @@ class TestNewFeatures(unittest.TestCase):
             config=self.config,
             remote="test_remote",
         )
-        self.automator._run_cmd = MagicMock()
         self.automator._rebase_current_branch = MagicMock()
         self.automator._get_current_branch = MagicMock(return_value="feature-branch")
         self.automator._get_commit_stack = MagicMock(return_value=["commit1"])
