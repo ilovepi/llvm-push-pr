@@ -364,15 +364,24 @@ class TestLLVMPRAutomator(unittest.TestCase):
 
     def test_get_commit_stack_empty_rev_list(self):
         """Test that _get_commit_stack handles empty git rev-list output."""
-        self.mock_command_runner.run_command.side_effect = [
-            subprocess.CompletedProcess([], 0, stdout="merge_base_hash"),
-            subprocess.CompletedProcess([], 0, stdout=""),
-        ]
+        self.mock_command_runner.run_command.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=""
+        )
 
         commits = self.automator._get_commit_stack()
 
         self.assertEqual(commits, [])
-        self.assertEqual(self.mock_command_runner.run_command.call_count, 2)
+        self.mock_command_runner.run_command.assert_called_once_with(
+            [
+                "git",
+                "rev-list",
+                "--reverse",
+                f"{self.config.upstream_remote}/{self.config.base_branch}..HEAD",
+            ],
+            capture_output=True,
+            text=True,
+            read_only=True,
+        )
 
     @patch.object(LLVMPRAutomator, "_get_current_branch", return_value="main")
     @patch.object(LLVMPRAutomator, "_get_commit_stack", return_value=["commit1"])
@@ -754,16 +763,6 @@ class TestLLVMPRAutomator(unittest.TestCase):
             ["git", "checkout", "feature-branch"], capture_output=True, read_only=False
         )
         self.mock_github_api.delete_branch.assert_not_called()
-
-    def test_get_commit_stack_no_merge_base(self):
-        """Test that _get_commit_stack exits if no merge base is found."""
-        # Configure the mock runner to return an empty string, simulating no merge base
-        self.mock_command_runner.run_command.return_value = subprocess.CompletedProcess(
-            [], 0, stdout=""
-        )
-
-        with self.assertRaises(LlvmPrError):
-            self.automator._get_commit_stack()
 
     def test_run_auto_merge_multiple_commits(self):
         """Test that --auto-merge with multiple commits exits."""
