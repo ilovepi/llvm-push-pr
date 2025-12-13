@@ -90,6 +90,14 @@ Currently, this is only supported for single-commit branches.
 python3 llvm_push_pr.py --no-merge
 ```
 
+### Working with alternate remotes
+
+If you have cloned the main `llvm/llvm-project.git` repository directly, your `origin` remote will point to upstream. If your personal fork is tracked under a different remote name (e.g., `my-fork`), you will need to specify both the `--upstream-remote` and `--remote` flags:
+
+```bash
+python3 llvm_push_pr.py --upstream-remote origin --remote my-fork
+```
+
 ## Auto-Detection Features
 
 To simplify usage, the script attempts to auto-detect certain values if they are not explicitly provided via command-line arguments:
