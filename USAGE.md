@@ -1,7 +1,7 @@
 # How to Use the LLVM Pull Request Automator
 
 This script is designed to automate the process of creating and landing a stack of pull requests from a local commit branch to the main branch of LLVM's GitHub repository.
-While its possible to use this for normal workflows, it's main purpose is to give contributors a practical alternative to pushing directly to LLVM's main branch.
+While it's possible to use this for normal workflows, its main purpose is to give contributors a practical alternative to pushing directly to LLVM's main branch.
 See the discussion at https://discourse.llvm.org/t/rfc-require-pull-requests-for-all-llvm-project-commits/88164 for more context.
 
 
@@ -10,13 +10,21 @@ See the discussion at https://discourse.llvm.org/t/rfc-require-pull-requests-for
 Before running the script, ensure you have the following set up:
 
 1.  **`git` command line tool:** The script relies on `git` for all local repository operations.
+
 2.  **GitHub Token:** You must have a GitHub Personal Access Token with `repo` scope. This token must be set as an environment variable:
     ```bash
     export LLVM_GITHUB_TOKEN="your_github_token_here"
     ```
-3.  **Git Remotes:** Your local repository must be configured with two remotes:
-    *   `upstream`: The remote that points to the main LLVM repository (e.g., `https://github.com/llvm/llvm-project.git`).
-    *   `origin`: The remote that points to your personal fork of the repository.
+
+    or to avoid having your token in your shell history something like:
+
+    ```bash
+    export LLVM_GITHUB_TOKEN="$(gh auth login)"
+    ```
+
+3.  **Git Remotes:** Your local repository should be configured with remotes for the upstream LLVM repository and your personal fork.
+    *   The script defaults to using `upstream` (e.g., `https://github.com/llvm/llvm-project.git`) for the main LLVM repository and `origin` for your personal fork.
+    *   If your remotes are named differently, you can override these defaults using the `--upstream-remote` and `--remote` flags.
 
 ## Basic Usage
 
@@ -25,6 +33,8 @@ To run the script, navigate to your local `llvm-project` repository, check out t
 ```bash
 python3 llvm_push_pr.py
 ```
+
+Assuming your remotes are configured with `upstream` pointing to `https://github.com/llvm/llvm-project.git` and `origin` pointing to your personal fork:
 
 This will:
 1.  Fetch the latest changes from `upstream/main`.
@@ -35,7 +45,7 @@ This will:
     c.  Attempt to merge the pull request.
     d.  If the merge is successful, it will rebase the local branch again and proceed to the next commit.
 
-If any rebase or merge fails, the script will abort and clean up after itself, leaving your repository in its original state.
+If any rebase or merge fails, the script will abort and clean up after itself, leaving your repository in the last good state. This means any commits that were successfully merged before the failure will remain merged, but temporary branches and other transient state will be removed.
 
 ## Cleanup Steps
 
