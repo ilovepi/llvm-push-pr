@@ -19,7 +19,7 @@ Before running the script, ensure you have the following set up:
     or to avoid having your token in your shell history something like:
 
     ```bash
-    export LLVM_GITHUB_TOKEN="$(gh auth login)"
+    export LLVM_GITHUB_TOKEN="$(gh auth token)"
     ```
 
 3.  **Git Remotes:** Your local repository should be configured with remotes for the upstream LLVM repository and your personal fork.
@@ -75,7 +75,7 @@ python3 llvm_push_pr.py --draft
 ### Enabling Auto-Merge
 
 You can use the `--auto-merge` flag to create a pull request and enable the "auto-merge" feature on GitHub, rather than having the script try to merge it directly.
-This is only supported for a single-commit, as the script would need to block until your first PR landed to move onto the next, or otherwise be too complex for a simple script.
+This is only supported for a single commit, as the script would need to block until your first PR landed to move onto the next, or otherwise be too complex for a simple script.
 
 ```bash
 python3 llvm_push_pr.py --auto-merge
