@@ -292,6 +292,26 @@ class GitHubAPI:
         )
         self.runner.print("Auto-merge enabled.")
 
+    def add_labels(self, pr_url: str, labels: List[str]) -> None:
+        if not pr_url:
+            return
+
+        if self.runner.dry_run:
+            self.runner.print(f"[Dry Run] Would add labels {labels} to {pr_url}")
+            return
+
+        pr_number_match = re.search(r"/pull/(\d+)", pr_url)
+        if not pr_number_match:
+            raise LlvmPrError(f"Could not extract PR number from URL: {pr_url}")
+        pr_number = pr_number_match.group(1)
+
+        self.runner.print(f"Adding labels {labels} to {pr_url}...")
+        self._request_and_parse_json(
+            "POST",
+            f"/repos/{LLVM_REPO}/issues/{pr_number}/labels",
+            json_payload={"labels": labels},
+        )
+
     def delete_branch(
         self, branch_name: str, default_branch: Optional[str] = None
     ) -> None:
@@ -508,6 +528,8 @@ class LLVMPRAutomator:
             body=commit_body,
             draft=self.config.draft,
         )
+
+        self.github_api.add_labels(pr_url, ["llvm-push"])
 
         if self.config.no_merge:
             return
